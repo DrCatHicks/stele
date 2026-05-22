@@ -6,17 +6,14 @@ exercises the database session. Real survey endpoints arrive in M1.
 
 from __future__ import annotations
 
-from typing import Annotated
-
-from fastapi import Depends, FastAPI
+from fastapi import FastAPI
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.db import get_session
+from api.db import SessionDep
+from api.survey_engine.router import router as surveys_router
 
 app = FastAPI(title="Survey Engine API")
-
-SessionDep = Annotated[AsyncSession, Depends(get_session)]
+app.include_router(surveys_router)
 
 
 @app.get("/health")

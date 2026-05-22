@@ -54,6 +54,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "api/tests/**" = ["S"]      # security checks too noisy in tests
 "scripts/**" = ["S"]        # the invariant linter reads/parses repo files by design
+"api/survey_engine/models.py" = ["RUF012"]  # SQLAlchemy __table_args__ is not a mutable-default footgun
 
 [tool.mypy]
 python_version = "3.12"

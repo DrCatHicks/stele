@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 from collections.abc import AsyncIterator
+from typing import Annotated
 
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # Local dev defaults to the dev-container superuser; CI and prod set this to the
@@ -24,3 +26,6 @@ async def get_session() -> AsyncIterator[AsyncSession]:
     """FastAPI dependency yielding a database session."""
     async with SessionLocal() as session:
         yield session
+
+
+SessionDep = Annotated[AsyncSession, Depends(get_session)]

@@ -1,0 +1,55 @@
+{
+  "name": "Stele",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "stele",
+  "workspaceFolder": "/workspace",
+
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "20"
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {}
+  },
+
+  "mounts": [
+    "source=stele-claude-config,target=/home/vscode/.claude,type=volume",
+    "source=stele-bash-history,target=/home/vscode/.bash-persistent,type=volume"
+  ],
+
+  "containerEnv": {
+    "CLAUDE_CONFIG_DIR": "/home/vscode/.claude"
+  },
+
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+
+  "forwardPorts": [5432, 8000, 5173],
+  "portsAttributes": {
+    "5432": { "label": "Postgres" },
+    "8000": { "label": "Survey API" },
+    "5173": { "label": "SurveyJS frontend (Vite)" }
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "innoverio.vscode-dbt-power-user",
+        "ms-azuretools.vscode-docker",
+        "mtxr.sqltools",
+        "mtxr.sqltools-driver-pg"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/workspace/.venv/bin/python",
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.formatOnSave": true
+        }
+      }
+    }
+  },
+
+  "remoteUser": "vscode"
+}

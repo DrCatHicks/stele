@@ -1,0 +1,18 @@
+services:
+  stele:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ../:/workspace:cached
+      - pg-data:/var/lib/postgresql/16/main
+    # Keep the container alive so VS Code can attach.
+    command: sleep infinity
+    environment:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: stele_dev
+      PGDATABASE: stele
+
+volumes:
+  pg-data:

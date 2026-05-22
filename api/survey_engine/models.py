@@ -34,3 +34,41 @@ class SurveyDefinition(Base):
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()")
     )
+
+
+class RawResponse(Base):
+    __tablename__ = "raw_responses"
+    __table_args__ = {"schema": "app"}
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    respondent_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    survey_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    survey_version: Mapped[int] = mapped_column(Integer)
+    submitted_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+    payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)
+    shown_questions: Mapped[list[Any] | None] = mapped_column(JSONB, default=None)
+    client_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)
+
+
+class Response(Base):
+    __tablename__ = "responses"
+    __table_args__ = {"schema": "app"}
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    raw_response_id: Mapped[int] = mapped_column(BigInteger)
+    respondent_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    survey_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    survey_version: Mapped[int] = mapped_column(Integer)
+    submitted_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class ResponseItem(Base):
+    __tablename__ = "response_items"
+    __table_args__ = {"schema": "app"}
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    response_id: Mapped[int] = mapped_column(BigInteger)
+    question_name: Mapped[str] = mapped_column(Text)
+    value: Mapped[Any | None] = mapped_column(JSONB, default=None)

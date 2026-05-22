@@ -17,7 +17,8 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.survey_engine.models import SurveyDefinition
+from api.survey_engine.models import RawResponse, Response, ResponseItem, SurveyDefinition
+from api.survey_engine.schemas import ResponseSubmit
 
 
 class SurveyNotFound(Exception):
@@ -30,6 +31,10 @@ class SurveyConflict(Exception):
 
 class InvalidDefinition(Exception):
     """Definition failed publish-time validation."""
+
+
+class SubmissionRejected(Exception):
+    """Submission could not be accepted (survey not published, or hash drift)."""
 
 
 def canonical_hash(definition: dict[str, Any]) -> str:
@@ -138,3 +143,54 @@ async def get_definition(
     session: AsyncSession, survey_id: uuid.UUID, version: int
 ) -> SurveyDefinition | None:
     return await _get(session, survey_id, version)
+
+
+async def submit_response(
+    session: AsyncSession,
+    survey_id: uuid.UUID,
+    version: int,
+    submission: ResponseSubmit,
+) -> Response:
+    """Append the raw submission and derive the normalized read-model in one
+    transaction. Both come from the same in-memory payload — the API never reads
+    raw_responses back to build the read-model (invariant 1/4).
+    """
+    survey = await _get(session, survey_id, version)
+    if survey is None:
+        raise SurveyNotFound(f"{survey_id} v{version}")
+    if survey.status != "published":
+        raise SubmissionRejected("survey version is not published")
+    if submission.definition_hash != survey.definition_hash:
+        raise SubmissionRejected("definition hash mismatch; the survey has drifted")
+
+    respondent_id = submission.respondent_id or uuid.uuid4()
+    submitted_at = datetime.now(UTC)
+
+    raw = RawResponse(
+        respondent_id=respondent_id,
+        survey_id=survey_id,
+        survey_version=version,
+        submitted_at=submitted_at,
+        payload=submission.payload,
+        shown_questions=submission.shown_questions,
+        client_metadata=submission.client_metadata,
+    )
+    session.add(raw)
+    await session.flush()
+
+    response = Response(
+        raw_response_id=raw.id,
+        respondent_id=respondent_id,
+        survey_id=survey_id,
+        survey_version=version,
+        submitted_at=submitted_at,
+    )
+    session.add(response)
+    await session.flush()
+
+    for question_name, value in submission.payload.items():
+        session.add(ResponseItem(response_id=response.id, question_name=question_name, value=value))
+
+    await session.commit()
+    await session.refresh(response)
+    return response

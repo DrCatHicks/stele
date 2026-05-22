@@ -26,3 +26,21 @@ class SurveyDefinitionOut(BaseModel):
 
 class SurveyDefinitionDetail(SurveyDefinitionOut):
     definition_json: dict[str, Any]
+
+
+class ResponseSubmit(BaseModel):
+    # The hash the respondent rendered against; used to reject submissions to a
+    # definition that has since drifted (design doc §6 risk table).
+    definition_hash: str
+    payload: dict[str, Any]
+    shown_questions: list[str]
+    respondent_id: uuid.UUID | None = None
+    client_metadata: dict[str, Any] | None = None
+
+
+class ResponseSubmitOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    raw_response_id: int
+    respondent_id: uuid.UUID
+    submitted_at: datetime

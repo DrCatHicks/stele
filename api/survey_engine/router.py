@@ -9,6 +9,8 @@ from fastapi import APIRouter, HTTPException
 from api.db import SessionDep
 from api.survey_engine import service
 from api.survey_engine.schemas import (
+    ResponseSubmit,
+    ResponseSubmitOut,
     SurveyDefinitionDetail,
     SurveyDefinitionOut,
     SurveyDraftCreate,
@@ -70,3 +72,20 @@ async def get_survey(
     if survey is None:
         raise HTTPException(status_code=404, detail="survey version not found")
     return SurveyDefinitionDetail.model_validate(survey)
+
+
+@router.post(
+    "/{survey_id}/versions/{version}/responses",
+    status_code=201,
+    response_model=ResponseSubmitOut,
+)
+async def submit_response(
+    survey_id: uuid.UUID, version: int, body: ResponseSubmit, session: SessionDep
+) -> ResponseSubmitOut:
+    try:
+        response = await service.submit_response(session, survey_id, version, body)
+    except service.SurveyNotFound:
+        raise HTTPException(status_code=404, detail="survey version not found") from None
+    except service.SubmissionRejected as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    return ResponseSubmitOut.model_validate(response)

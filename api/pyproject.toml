@@ -1,0 +1,56 @@
+[project]
+name = "survey-engine-api"
+version = "0.0.0"
+description = "Survey engine API (response collection, withdrawal, PII routing)."
+requires-python = ">=3.12"
+dependencies = [
+    # Add real deps here as you build out the API.
+    # Placeholder set for a SurveyJS-shaped API:
+    # "fastapi>=0.115",
+    # "uvicorn[standard]>=0.32",
+    # "sqlalchemy>=2.0",
+    # "psycopg[binary]>=3.2",
+    # "pydantic>=2.9",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.7.4",
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# Sensible starting set. Tune as you get a feel for the codebase.
+select = [
+    "E", "F", "W",      # pycodestyle + pyflakes
+    "I",                # isort
+    "B",                # bugbear
+    "UP",               # pyupgrade
+    "SIM",              # simplify
+    "RUF",              # ruff-specific
+    "S",                # bandit (security)
+    "PT",               # pytest style
+]
+ignore = [
+    "E501",  # line length — formatter handles it
+    "S101",  # `assert` is fine in tests
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S"]  # security checks too noisy in tests
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+# Soften gradually as you adopt; remove `ignore_missing_imports` once stubs exist.
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers --strict-config"
+testpaths = ["tests"]

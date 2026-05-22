@@ -1,0 +1,16 @@
+# This file lives in the repo for CI convenience.
+# Locally, dbt looks in ~/.dbt/profiles.yml by default — copy this or use
+# `dbt --profiles-dir .` to point at this file.
+
+survey_engine:
+  target: ci
+  outputs:
+    ci:
+      type: postgres
+      host: "{{ env_var('DBT_HOST', 'localhost') }}"
+      user: "{{ env_var('DBT_USER', 'dbt') }}"
+      password: "{{ env_var('DBT_PASSWORD', 'dbt') }}"
+      port: 5432
+      dbname: "{{ env_var('DBT_DBNAME', 'dbt') }}"
+      schema: marts
+      threads: 4

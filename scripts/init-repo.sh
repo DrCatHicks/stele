@@ -57,6 +57,7 @@ echo
 echo "Repo created and protected: https://github.com/$(gh api user --jq .login)/$REPO_NAME"
 echo
 echo "Next steps:"
-echo "  1. gh secret set ANTHROPIC_API_KEY    # paste your key when prompted"
-echo "  2. Edit .github/CODEOWNERS to replace @your-username"
-echo "  3. Enable CodeQL in Settings → Code security and analysis"
+echo "  1. claude setup-token                              # generate OAuth token"
+echo "  2. gh secret set CLAUDE_CODE_OAUTH_TOKEN           # paste token when prompted"
+echo "  3. Edit .github/CODEOWNERS to replace @your-username"
+echo "  4. Enable CodeQL in Settings → Code security and analysis"

@@ -52,7 +52,7 @@ GitHub Actions runs on every PR (`.github/workflows/ci.yml`):
 
 Two additional workflows:
 
-- `claude-review.yml` — Claude reviews PRs. Requires `ANTHROPIC_API_KEY` secret.
+- `claude-review.yml` — Claude reviews PRs. Requires `CLAUDE_CODE_OAUTH_TOKEN` secret (generated via `claude setup-token`, uses your Max subscription).
 - `codeql.yml` — GitHub SAST for Python and TS, on PRs and weekly.
 
 ## Required repo setup
@@ -60,7 +60,7 @@ Two additional workflows:
 After pushing the initial commit, configure these in GitHub:
 
 1. **Secrets** (Settings → Secrets and variables → Actions):
-   - `ANTHROPIC_API_KEY` — for Claude PR review
+   - `CLAUDE_CODE_OAUTH_TOKEN` — for Claude PR review. Generate with `claude setup-token` locally and paste the output.
 2. **Branch protection** (Settings → Branches → add rule for `main`):
    - Require pull request before merging
    - Require status checks to pass: select all `CI · *` jobs and CodeQL

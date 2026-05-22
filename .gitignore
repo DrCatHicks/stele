@@ -24,5 +24,11 @@ logs/
 *.swp
 .idea/
 
+# Node
+node_modules/
+dist/
+.pnpm-store/
+*.tsbuildinfo
+
 # Misc
 *.log

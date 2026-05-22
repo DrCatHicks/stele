@@ -1,0 +1,187 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Postgres service superuser (used only to create the DB and apply init SQL).
+  PGHOST: localhost
+  PGPORT: "5432"
+  PGUSER: postgres
+  PGPASSWORD: postgres
+
+jobs:
+  python-lint:
+    name: Python · lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+      - run: uv sync
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+
+  python-invariants:
+    name: Python · invariants (check_invariants.py)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/check_invariants.py
+
+  python-typecheck:
+    name: Python · typecheck (mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+      - run: uv sync
+      - run: uv run mypy api/
+
+  python-test:
+    name: Python · test (pytest)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # The API connects as the least-privileged writer role, not a superuser,
+      # so missing grants fail CI here rather than hiding behind dev superuser.
+      STELE_DATABASE_URL: postgresql+psycopg://stele_api:dev@localhost:5432/stele
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+      - run: uv sync
+      - name: Provision database (schemas, roles, grants)
+        run: |
+          psql -c "CREATE DATABASE stele;"
+          psql -v ON_ERROR_STOP=1 -d postgres -f .devcontainer/postgres-init/01-schemas-and-roles.sql
+      - name: Migrate
+        # Run migrations as the service superuser so the schema default
+        # privileges defined in the init SQL apply to the created tables.
+        working-directory: api
+        env:
+          STELE_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/stele
+        run: uv run alembic upgrade head
+      - run: uv run pytest
+
+  ts-lint:
+    name: TypeScript · lint (eslint + prettier)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm format:check
+
+  ts-typecheck:
+    name: TypeScript · typecheck (tsc)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+
+  ts-test:
+    name: TypeScript · test (vitest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+
+  ts-build:
+    name: TypeScript · build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+  dbt:
+    name: dbt · parse & compile
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DBT_HOST: localhost
+      DBT_USER: stele_etl
+      DBT_PASSWORD: dev
+      DBT_DBNAME: stele
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+      - run: uv sync
+      - name: Provision database (schemas, roles, grants)
+        run: |
+          psql -c "CREATE DATABASE stele;"
+          psql -v ON_ERROR_STOP=1 -d postgres -f .devcontainer/postgres-init/01-schemas-and-roles.sql
+      - name: dbt parse & compile
+        working-directory: dbt
+        run: |
+          uv run dbt parse --profiles-dir .
+          uv run dbt compile --profiles-dir .

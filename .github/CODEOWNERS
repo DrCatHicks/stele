@@ -1,0 +1,10 @@
+# Default owner for everything in the repo.
+# Replace @countercheck if your GitHub handle differs.
+*       @countercheck
+
+# Design docs are reference material — changes warrant explicit review.
+/survey-engine-design-doc.md   @countercheck
+/CLAUDE.md                      @countercheck
+
+# Role/grant SQL is silently dangerous (CLAUDE.md "Don't without asking").
+/.devcontainer/postgres-init/   @countercheck

@@ -1,0 +1,48 @@
+# Pre-commit config for Stele.
+#
+# Install once per clone:
+#   uv tool install pre-commit
+#   pre-commit install
+#
+# Run on all files manually:
+#   pre-commit run --all-files
+
+repos:
+  # Ruff: lint + format Python.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.14
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  # Stele's invariant checker. Runs as a local hook so the script in
+  # scripts/ is the source of truth, not a pinned external version.
+  - repo: local
+    hooks:
+      - id: stele-invariants
+        name: Stele invariants (CLAUDE.md)
+        entry: python3 scripts/check_invariants.py
+        language: system
+        # Run on SQL (dbt models) and YAML (sources.yml) — the file types
+        # the checks actually care about. Python is scanned for invariant
+        # 5 as well, since the API can also write to dim_question.
+        types_or: [sql, yaml, python]
+        # Restrict to dbt/ and api/ trees so we don't scan unrelated YAML
+        # like .github/workflows/. Pre-commit passes only matching files.
+        files: ^(dbt|api)/
+        # Don't pass the file list — the script handles file-list mode but
+        # cross-file checks (sources.yml) work better with a full scan, and
+        # full scans are cheap at this size.
+        pass_filenames: false
+
+  # mypy on the API only.
+  - repo: local
+    hooks:
+      - id: mypy-api
+        name: mypy (api/)
+        entry: uv run mypy api/
+        language: system
+        types: [python]
+        files: ^api/
+        pass_filenames: false

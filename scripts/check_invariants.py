@@ -30,8 +30,8 @@ import json
 import re
 import sys
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import ClassVar
 
@@ -213,7 +213,7 @@ class Invariant4_SourcesYaml(Check):
         "by dbt, violating the one-parser rule. See CLAUDE.md § Invariants."
     )
 
-    ALLOWED_APP_TABLES = {"raw_responses"}
+    ALLOWED_APP_TABLES: ClassVar[set[str]] = {"raw_responses"}
 
     def run(self, staged: list[Path] | None) -> CheckResult:
         dbt_dir = REPO_ROOT / "dbt"
@@ -477,7 +477,7 @@ def _print_human(results: list[CheckResult]) -> None:
 
 def _emit_json(results: list[CheckResult], log_path: Path | None) -> str:
     record = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "results": [
             {
                 "invariant": r.invariant,

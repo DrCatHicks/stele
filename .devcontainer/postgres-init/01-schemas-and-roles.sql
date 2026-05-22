@@ -40,6 +40,10 @@ $$;
 GRANT USAGE, CREATE ON SCHEMA app, pii TO stele_api;
 ALTER DEFAULT PRIVILEGES IN SCHEMA app, pii
     GRANT SELECT, INSERT, UPDATE ON TABLES TO stele_api;
+-- INSERTs into serial/bigserial tables call nextval(), which needs USAGE on
+-- the backing sequence. Without this, least-privilege writes fail.
+ALTER DEFAULT PRIVILEGES IN SCHEMA app, pii
+    GRANT USAGE ON SEQUENCES TO stele_api;
 
 -- ETL reads from app, writes to stg and marts.
 GRANT USAGE ON SCHEMA app TO stele_etl;
@@ -48,6 +52,8 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA app
 GRANT USAGE, CREATE ON SCHEMA stg, marts TO stele_etl;
 ALTER DEFAULT PRIVILEGES IN SCHEMA stg, marts
     GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON TABLES TO stele_etl;
+ALTER DEFAULT PRIVILEGES IN SCHEMA stg, marts
+    GRANT USAGE ON SEQUENCES TO stele_etl;
 
 -- Analyst reads marts only.
 GRANT USAGE ON SCHEMA marts TO stele_analyst;

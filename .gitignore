@@ -24,6 +24,9 @@ logs/
 *.swp
 .idea/
 
+# Claude Code — personal/local settings (shared settings.json IS committed)
+.claude/settings.local.json
+
 # Node
 node_modules/
 dist/

@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 scripts/check_invariants.py *)",
+      "Bash(pnpm test)",
+      "Bash(pnpm format:check)",
+      "Bash(pnpm lint)",
+      "Bash(pnpm typecheck)"
+    ]
+  }
+}

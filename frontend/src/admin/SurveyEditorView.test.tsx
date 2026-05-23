@@ -30,9 +30,9 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function renderEditor() {
+function renderEditor(path = '/admin/surveys/s/versions/1') {
   return render(
-    <MemoryRouter initialEntries={['/admin/surveys/s/versions/1']}>
+    <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path="/admin/surveys/:surveyId/versions/:version" element={<SurveyEditorView />} />
       </Routes>
@@ -41,6 +41,13 @@ function renderEditor() {
 }
 
 describe('SurveyEditorView', () => {
+  it('shows an error (not an endless spinner) for a malformed version in the URL', async () => {
+    mockedFetch.mockResolvedValue(DRAFT_DETAIL);
+    renderEditor('/admin/surveys/s/versions/not-a-number');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Invalid survey URL.');
+    expect(mockedFetch).not.toHaveBeenCalled();
+  });
+
   it('loads the definition into the editor textarea', async () => {
     mockedFetch.mockResolvedValue(DRAFT_DETAIL);
     renderEditor();

@@ -13,6 +13,7 @@ function errorMessage(error: unknown): string {
 export function SurveyEditorView() {
   const { surveyId, version: versionParam } = useParams();
   const version = Number(versionParam);
+  const paramsInvalid = !surveyId || Number.isNaN(version);
 
   const [detail, setDetail] = useState<SurveyDetail | null>(null);
   const [draftText, setDraftText] = useState('');
@@ -78,6 +79,9 @@ export function SurveyEditorView() {
       .finally(() => setBusy(false));
   };
 
+  // Guard a malformed URL (e.g. a non-numeric version) up front, so it shows an
+  // error instead of hanging forever on the detail===null loading state.
+  if (paramsInvalid) return <div role="alert">Invalid survey URL.</div>;
   if (error && detail === null) return <div role="alert">Error: {error}</div>;
   if (detail === null) return <div role="status">Loading…</div>;
 

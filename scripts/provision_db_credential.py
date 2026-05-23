@@ -158,7 +158,11 @@ def cmd_provision(args: argparse.Namespace) -> int:
                     "(subject_label, access, login_role, status) VALUES (%s, %s, %s, 'active')",
                     (subject, access, login_role),
                 )
-        # Success: deliver the password to the terminal only.
+        # Success: deliver the password to the terminal sink only. The sink is
+        # /dev/tty by default (see _open_secret_sink) — a terminal device, not
+        # persistent storage — so CodeQL's clear-text-storage alert here is a false
+        # positive (dismissed on the PR). The operator must see the one-time password
+        # somehow; the terminal is the most ephemeral safe channel.
         secret_out.write(f"password for {login_role}: {password}\n")
     finally:
         secret_out.close()
@@ -222,6 +226,8 @@ def cmd_rotate(args: argparse.Namespace) -> int:
                     "UPDATE app.db_credential_grants SET rotated_at = now() WHERE login_role = %s",
                     (login_role,),
                 )
+        # Terminal sink (/dev/tty), not storage — clear-text-storage is a false
+        # positive here, same as in cmd_provision (dismissed on the PR).
         secret_out.write(f"new password for {login_role}: {password}\n")
     finally:
         secret_out.close()

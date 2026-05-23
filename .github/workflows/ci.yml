@@ -68,6 +68,12 @@ jobs:
       # The API connects as the least-privileged writer role, not a superuser,
       # so missing grants fail CI here rather than hiding behind dev superuser.
       STELE_DATABASE_URL: postgresql+psycopg://stele_api:dev@localhost:5432/stele
+      # The provisioning CLI (M3.5) needs role-DDL privilege, which stele_api
+      # deliberately lacks. Point its elevated connection at the service superuser
+      # so the CLI integration tests exercise the real CREATE ROLE / GRANT path in
+      # CI instead of skipping. This is *test* wiring — in prod the operator runs
+      # the CLI with a dedicated CREATEROLE role, never the app's connection.
+      STELE_PROVISION_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/stele
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4

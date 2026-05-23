@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from api.auth.deps import require_role
 from api.db import SessionDep
 from api.survey_engine import service
 from api.survey_engine.schemas import (
@@ -18,14 +19,23 @@ from api.survey_engine.schemas import (
 
 router = APIRouter(prefix="/surveys", tags=["surveys"])
 
+# Authoring (create/edit/publish/version) is operator-only; respondent-facing
+# GET and submit stay public (design doc §3.10). Reviewers read PII, not authors.
+_author_only = Depends(require_role("researcher", "admin"))
 
-@router.post("", status_code=201, response_model=SurveyDefinitionOut)
+
+@router.post("", status_code=201, response_model=SurveyDefinitionOut, dependencies=[_author_only])
 async def create_survey(body: SurveyDraftCreate, session: SessionDep) -> SurveyDefinitionOut:
     survey = await service.create_draft(session, body.definition_json)
     return SurveyDefinitionOut.model_validate(survey)
 
 
-@router.post("/{survey_id}/drafts", status_code=201, response_model=SurveyDefinitionOut)
+@router.post(
+    "/{survey_id}/drafts",
+    status_code=201,
+    response_model=SurveyDefinitionOut,
+    dependencies=[_author_only],
+)
 async def create_draft_version(
     survey_id: uuid.UUID, session: SessionDep, clone: bool = True
 ) -> SurveyDefinitionOut:
@@ -36,7 +46,11 @@ async def create_draft_version(
     return SurveyDefinitionOut.model_validate(survey)
 
 
-@router.put("/{survey_id}/versions/{version}", response_model=SurveyDefinitionOut)
+@router.put(
+    "/{survey_id}/versions/{version}",
+    response_model=SurveyDefinitionOut,
+    dependencies=[_author_only],
+)
 async def edit_survey(
     survey_id: uuid.UUID, version: int, body: SurveyDraftCreate, session: SessionDep
 ) -> SurveyDefinitionOut:
@@ -49,7 +63,11 @@ async def edit_survey(
     return SurveyDefinitionOut.model_validate(survey)
 
 
-@router.post("/{survey_id}/versions/{version}/publish", response_model=SurveyDefinitionOut)
+@router.post(
+    "/{survey_id}/versions/{version}/publish",
+    response_model=SurveyDefinitionOut,
+    dependencies=[_author_only],
+)
 async def publish_survey(
     survey_id: uuid.UUID, version: int, session: SessionDep
 ) -> SurveyDefinitionOut:

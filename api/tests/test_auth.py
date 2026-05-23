@@ -129,6 +129,23 @@ async def test_logout_without_session_is_idempotent(client: AsyncClient) -> None
     assert resp.status_code == 204
 
 
+async def test_disabling_user_revokes_live_session(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # The differentiator of server-side sessions: disabling an account after a
+    # session is issued must immediately stop that session from authenticating.
+    user_id = await _make_user(db_session)
+    await client.post("/auth/login", json={"email": "admin@example.com", "password": PASSWORD})
+    assert (await client.get("/auth/me")).status_code == 200
+
+    user = await service.get_user(db_session, user_id)
+    assert user is not None
+    user.disabled = True
+    await db_session.commit()
+
+    assert (await client.get("/auth/me")).status_code == 401
+
+
 async def test_tampered_cookie_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
     await _make_user(db_session)
     await client.post("/auth/login", json={"email": "admin@example.com", "password": PASSWORD})

@@ -15,6 +15,7 @@ real roles outside the per-test rollback transaction, so it cleans up after itse
 from __future__ import annotations
 
 import importlib.util
+import os
 import secrets
 from pathlib import Path
 from types import ModuleType
@@ -22,6 +23,11 @@ from types import ModuleType
 import psycopg
 import pytest
 from psycopg import sql
+
+# This is a dev/CI integration test, so opt into the CLI's dev-superuser fallback
+# for the local case where STELE_PROVISION_DATABASE_URL is unset. When CI sets the
+# URL explicitly the flag is moot (the URL wins). Set before the CLI reads it.
+os.environ.setdefault("STELE_ALLOW_DEV_FALLBACK", "1")
 
 # Load the standalone CLI script (scripts/ is not a package) by path.
 _CLI_PATH = Path(__file__).resolve().parents[2] / "scripts" / "provision_db_credential.py"
@@ -36,7 +42,12 @@ def _elevated_conninfo() -> str:
     return str(cli._conninfo())
 
 
-def _can_create_roles(conninfo: str) -> bool:
+def _can_create_roles() -> bool:
+    """True only if we can resolve an elevated conn that can create roles."""
+    try:
+        conninfo = _elevated_conninfo()
+    except cli.provisioning.ProvisioningError:
+        return False
     with psycopg.connect(conninfo) as conn:
         row = conn.execute(
             "SELECT rolsuper OR rolcreaterole FROM pg_roles WHERE rolname = current_user"
@@ -44,12 +55,35 @@ def _can_create_roles(conninfo: str) -> bool:
     return bool(row and row[0])
 
 
-pytestmark = pytest.mark.skipif(
-    not _can_create_roles(_elevated_conninfo()),
+# Only the DB-touching tests need an elevated connection; the _conninfo unit
+# tests below are env-only and must always run, so this gates per-test rather
+# than the whole module.
+_needs_elevated = pytest.mark.skipif(
+    not _can_create_roles(),
     reason="provisioning CLI needs a CREATEROLE/superuser connection",
 )
 
 
+def test_conninfo_requires_url_without_optin(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The privileged tool must not guess where to connect: no URL, no opt-in → fail.
+    monkeypatch.delenv("STELE_PROVISION_DATABASE_URL", raising=False)
+    monkeypatch.delenv("STELE_ALLOW_DEV_FALLBACK", raising=False)
+    with pytest.raises(cli.provisioning.ProvisioningError):
+        cli._conninfo()
+
+
+def test_conninfo_dev_fallback_is_explicit_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("STELE_PROVISION_DATABASE_URL", raising=False)
+    monkeypatch.setenv("STELE_ALLOW_DEV_FALLBACK", "1")
+    assert cli._conninfo() == cli._DEV_FALLBACK_URL
+
+
+def test_conninfo_strips_sqlalchemy_driver_tag(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STELE_PROVISION_DATABASE_URL", "postgresql+psycopg://u:p@h:5432/db")
+    assert cli._conninfo() == "postgresql://u:p@h:5432/db"
+
+
+@_needs_elevated
 def test_provision_then_revoke_roundtrip() -> None:
     conninfo = _elevated_conninfo()
     subject = f"clitest_{secrets.token_hex(4)}@example.com"
@@ -102,6 +136,7 @@ def test_provision_then_revoke_roundtrip() -> None:
             )
 
 
+@_needs_elevated
 def test_provision_rejects_duplicate_active_subject() -> None:
     conninfo = _elevated_conninfo()
     subject = f"clitest_{secrets.token_hex(4)}@example.com"

@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import CursorResult, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.survey_engine.models import (
@@ -374,7 +374,7 @@ async def withdraw_respondent(
     pii_rows_deleted = 0
     if raw_ids:
         pii_result = cast(
-            "CursorResult[Any]",
+            CursorResult[Any],
             await session.execute(
                 delete(FreeTextResponse).where(FreeTextResponse.raw_response_id.in_(raw_ids))
             ),
@@ -384,7 +384,7 @@ async def withdraw_respondent(
     # Step 3 — purge the rebuildable read-model. response_items rows cascade via
     # the ON DELETE CASCADE FK on response_items.response_id.
     responses_result = cast(
-        "CursorResult[Any]",
+        CursorResult[Any],
         await session.execute(delete(Response).where(Response.respondent_id == respondent_id)),
     )
     responses_purged = responses_result.rowcount or 0
@@ -394,7 +394,7 @@ async def withdraw_respondent(
     # sanctioned UPDATE of raw_responses (CLAUDE.md / design §3.8); id,
     # respondent_id, survey_id, survey_version and submitted_at are preserved.
     raw_result = cast(
-        "CursorResult[Any]",
+        CursorResult[Any],
         await session.execute(
             update(RawResponse)
             .where(RawResponse.respondent_id == respondent_id)

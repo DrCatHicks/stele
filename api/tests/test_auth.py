@@ -146,16 +146,33 @@ async def test_disabling_user_revokes_live_session(
     assert (await client.get("/auth/me")).status_code == 401
 
 
-async def test_tampered_cookie_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
-    await _make_user(db_session)
-    await client.post("/auth/login", json={"email": "admin@example.com", "password": PASSWORD})
-    good = client.cookies.get(config.COOKIE_NAME)
-    assert good is not None
-    # Flip the last character to break the signature.
-    tampered = good[:-1] + ("A" if good[-1] != "A" else "B")
-    client.cookies.set(config.COOKIE_NAME, tampered)
+def _cookie_header(value: str) -> dict[str, str]:
+    # Send exactly one cookie via an explicit header. Cookie-injection tests must
+    # not go through the client jar: setting a same-named cookie there leaves the
+    # login cookie in place too, and which duplicate the HTTP stack forwards/parses
+    # last varies across environments (Python/httpx versions) — a CI flake.
+    return {"Cookie": f"{config.COOKIE_NAME}={value}"}
 
-    assert (await client.get("/auth/me")).status_code == 401
+
+async def test_tampered_cookie_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Tampering one character of a validly-signed cookie must 401 even when the
+    # underlying token is a live session: the signature is verified before (and
+    # independently of) the DB lookup, with no fallback to the raw value.
+    user_id = await _make_user(db_session)
+    token = "live-session-token"
+    db_session.add(
+        Session(token=token, user_id=user_id, expires_at=datetime.now(UTC) + timedelta(hours=1))
+    )
+    await db_session.commit()
+    signed = sign_token(token)
+    tampered = signed[:-1] + ("A" if signed[-1] != "A" else "B")
+
+    # The untampered cookie authenticates, so the 401 below is due to tampering.
+    ok = await client.get("/auth/me", headers=_cookie_header(signed))
+    assert ok.status_code == 200
+
+    bad = await client.get("/auth/me", headers=_cookie_header(tampered))
+    assert bad.status_code == 401
 
 
 async def test_expired_session_rejected_and_cleaned(
@@ -172,9 +189,8 @@ async def test_expired_session_rejected_and_cleaned(
         )
     )
     await db_session.commit()
-    client.cookies.set(config.COOKIE_NAME, sign_token(token))
 
-    resp = await client.get("/auth/me")
+    resp = await client.get("/auth/me", headers=_cookie_header(sign_token(token)))
 
     assert resp.status_code == 401
     # resolve_session deletes the expired row opportunistically.

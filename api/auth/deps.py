@@ -20,7 +20,7 @@ from fastapi import Depends, HTTPException, Request
 from itsdangerous import BadSignature, URLSafeSerializer
 
 from api.auth import config
-from api.auth.service import AuthenticatedUser, resolve_session
+from api.auth.service import VALID_ROLES, AuthenticatedUser, resolve_session
 from api.db import SessionDep
 
 
@@ -66,7 +66,20 @@ def require_role(*roles: str) -> Callable[[AuthenticatedUser], Awaitable[Authent
     authorization, raising 403 when the session is valid but its role isn't
     permitted. Returns the user so a gated endpoint that needs the actor can
     depend on the result directly rather than re-resolving it.
+
+    Validated at factory-creation time so misconfiguration fails loudly at
+    import (when routes declare their gates) rather than as a silent 403 on
+    every request: an empty ``roles`` would reject everyone, and a typo'd role
+    would never match a real user's role.
     """
+    if not roles:
+        raise ValueError("require_role needs at least one role")
+    unknown = set(roles) - VALID_ROLES
+    if unknown:
+        raise ValueError(
+            f"require_role got unknown role(s) {sorted(unknown)}; "
+            f"valid roles are {sorted(VALID_ROLES)}"
+        )
     allowed = frozenset(roles)
 
     async def _require_role(user: CurrentUser) -> AuthenticatedUser:

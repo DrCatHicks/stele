@@ -9,23 +9,35 @@ import { AuthProvider } from './auth/AuthContext';
 import { RequireAuth } from './auth/RequireAuth';
 
 /**
- * Top-level routes. "/" is the public respondent runner; everything under
- * "/admin" is the operator area — the login screen is open, the rest sits behind
- * RequireAuth. AuthProvider wraps it all so both areas share one session probe.
+ * The operator area, mounted under "/admin/*". AuthProvider lives here — not at
+ * the app root — so the public respondent path never triggers a session probe.
+ * The login screen is open; everything else sits behind RequireAuth.
  */
-export function App() {
+function AdminApp() {
   return (
     <AuthProvider>
       <Routes>
-        <Route path="/" element={<RespondentEntry />} />
-        <Route path="/admin/login" element={<LoginView />} />
+        <Route path="login" element={<LoginView />} />
         <Route element={<RequireAuth />}>
-          <Route path="/admin" element={<AdminLayout />}>
+          <Route element={<AdminLayout />}>
             <Route index element={<SurveyListView />} />
             <Route path="surveys/:surveyId/versions/:version" element={<SurveyEditorView />} />
           </Route>
         </Route>
       </Routes>
     </AuthProvider>
+  );
+}
+
+/**
+ * Top-level routes. "/" is the public respondent runner (no auth machinery);
+ * "/admin/*" is the operator area.
+ */
+export function App() {
+  return (
+    <Routes>
+      <Route path="/" element={<RespondentEntry />} />
+      <Route path="/admin/*" element={<AdminApp />} />
+    </Routes>
   );
 }

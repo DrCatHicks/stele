@@ -9,7 +9,6 @@ import {
 } from 'react';
 
 import {
-  ApiError,
   fetchCurrentUser,
   login as apiLogin,
   logout as apiLogout,
@@ -63,12 +62,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    // Best-effort: logout is idempotent server-side, so clear client state
+    // regardless of the outcome — an HTTP error (already-gone session) or a
+    // network failure must not leave the user stuck "logged in" in the UI.
     try {
       await apiLogout();
-    } catch (err) {
-      // Logout is idempotent server-side; a 401 just means the session was
-      // already gone. Clear locally regardless.
-      if (!(err instanceof ApiError)) throw err;
+    } catch {
+      // swallowed deliberately
     }
     setUser(null);
   }, []);

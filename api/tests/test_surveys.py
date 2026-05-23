@@ -110,6 +110,31 @@ async def test_get_unknown_survey_404(authed_client: AsyncClient) -> None:
     assert response.status_code == 404
 
 
+async def test_list_surveys_returns_all_versions_newest_first(authed_client: AsyncClient) -> None:
+    """The admin list surfaces every version, with the definition JSON omitted.
+
+    Scoped to the survey created here: the dev DB carries seeded surveys that the
+    transactional fixture can't roll back, so global counts aren't deterministic.
+    """
+    first = await _create_draft(authed_client)
+    survey_id = first["survey_id"]
+    await authed_client.post(f"/surveys/{survey_id}/versions/1/publish")
+    await authed_client.post(f"/surveys/{survey_id}/drafts")  # v2 draft
+
+    response = await authed_client.get("/surveys")
+    assert response.status_code == 200
+    rows = response.json()
+    # List view is metadata only — no definition_json leaks into the index.
+    assert all("definition_json" not in r for r in rows)
+
+    mine = [r for r in rows if r["survey_id"] == survey_id]
+    assert [r["version"] for r in mine] == [2, 1]  # newest version first
+    assert {r["status"] for r in mine} == {"draft", "published"}
+
+    # The two rows I just created are the newest writes → front of the global list.
+    assert {r["survey_id"] for r in rows[:2]} == {survey_id}
+
+
 def _free_text_definition(element_extra: dict[str, Any]) -> dict[str, Any]:
     return {
         "pages": [{"name": "p1", "elements": [{"type": "comment", "name": "ft1", **element_extra}]}]

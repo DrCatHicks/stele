@@ -26,6 +26,8 @@ logs/
 
 # Claude Code — personal/local settings (shared settings.json IS committed)
 .claude/settings.local.json
+# Local git worktrees created by Claude Code agents (not project content)
+.claude/worktrees/
 
 # Node
 node_modules/

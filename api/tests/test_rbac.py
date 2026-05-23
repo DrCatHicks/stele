@@ -33,6 +33,7 @@ VALID_DEFINITION: dict[str, Any] = {
 # (method, path, json-body-or-None, expected-status-once-gate-cleared) per
 # authoring route. Create yields 201; the rest target a missing survey → 404.
 AUTHORING_ROUTES = [
+    ("get", "/surveys", None, 200),
     ("post", "/surveys", {"definition_json": VALID_DEFINITION}, 201),
     ("post", f"/surveys/{NONEXISTENT}/drafts", None, 404),
     ("put", f"/surveys/{NONEXISTENT}/versions/1", {"definition_json": VALID_DEFINITION}, 404),

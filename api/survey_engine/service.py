@@ -233,6 +233,22 @@ async def get_definition(
     return await _get(session, survey_id, version)
 
 
+async def list_definitions(session: AsyncSession) -> list[SurveyDefinition]:
+    """All survey/version rows, newest first — backs the admin survey list.
+
+    Returns every (survey_id, version) row, not just the latest per survey: the
+    admin needs to see draft and published versions side by side to decide where
+    to edit or publish. Definition JSON is omitted from the list view (callers use
+    the detail endpoint); the ORM rows still carry it but the list schema drops it.
+    """
+    result = await session.execute(
+        select(SurveyDefinition).order_by(
+            SurveyDefinition.created_at.desc(), SurveyDefinition.version.desc()
+        )
+    )
+    return list(result.scalars().all())
+
+
 async def submit_response(
     session: AsyncSession,
     survey_id: uuid.UUID,

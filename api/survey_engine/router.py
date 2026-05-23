@@ -24,6 +24,12 @@ router = APIRouter(prefix="/surveys", tags=["surveys"])
 _author_only = Depends(require_role("researcher", "admin"))
 
 
+@router.get("", response_model=list[SurveyDefinitionOut], dependencies=[_author_only])
+async def list_surveys(session: SessionDep) -> list[SurveyDefinitionOut]:
+    surveys = await service.list_definitions(session)
+    return [SurveyDefinitionOut.model_validate(s) for s in surveys]
+
+
 @router.post("", status_code=201, response_model=SurveyDefinitionOut, dependencies=[_author_only])
 async def create_survey(body: SurveyDraftCreate, session: SessionDep) -> SurveyDefinitionOut:
     survey = await service.create_draft(session, body.definition_json)

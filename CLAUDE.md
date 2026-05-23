@@ -80,6 +80,7 @@ Work on branches; never commit directly to `main`. One branch per story/unit of 
 - Push the branch and open a PR into `main`. CI (`.github/workflows/ci.yml`) must pass; the human reviewer merges.
 - Keep `main` green and releasable at all times.
 - Don't force-push `main` or amend published commits; create new commits instead.
+- After any rebase / cherry-pick / `--abort` gymnastics, verify the *remote* with `git ls-remote origin <branch>` and `gh pr view <n> --json headRefOid` before claiming a push landed. A local "[new branch]" or "Everything up-to-date" message and the `origin/<branch>` tracking ref can lie: an interrupted rebase can leave you on a detached HEAD while the branch ref (and every push) stays pinned to the pre-rebase commit. Trust the server, not local refs.
 
 ## Don't add silent defaults for methodological judgments
 

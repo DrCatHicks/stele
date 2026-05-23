@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -29,35 +30,40 @@ const AuthContext = createContext<AuthState | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready'>('loading');
+  // Set once the user takes an explicit auth action (login/logout). Guards the
+  // mount probe from clobbering a newer state if a slow /auth/me resolves after
+  // the user has already logged in/out.
+  const probeSuperseded = useRef(false);
 
-  // Probe the cookie session once on mount. A 401 just means "not logged in";
-  // any other failure also leaves us logged-out (fail closed for an admin area).
+  // Probe the cookie session once on mount. A 401 here just means "not logged
+  // in" (not an expired session), so it must NOT fire the global unauthorized
+  // handler — that's only armed in .finally, once the probe has settled.
   useEffect(() => {
     let active = true;
     fetchCurrentUser()
       .then((u) => {
-        if (active) setUser(u);
+        if (active && !probeSuperseded.current) setUser(u);
       })
       .catch(() => {
-        if (active) setUser(null);
+        // fetchCurrentUser's 401 doesn't fire the handler yet (still null here).
+        if (active && !probeSuperseded.current) setUser(null);
       })
       .finally(() => {
-        if (active) setStatus('ready');
+        if (!active) return;
+        setStatus('ready');
+        // Now arm it: a 401 from any *later* call (expired/revoked session)
+        // clears the user so the route guard bounces to login next render.
+        setUnauthorizedHandler(() => setUser(null));
       });
     return () => {
       active = false;
+      setUnauthorizedHandler(null);
     };
-  }, []);
-
-  // A 401 from any later call (expired/revoked session) clears the user, so the
-  // route guard bounces to login on the next render.
-  useEffect(() => {
-    setUnauthorizedHandler(() => setUser(null));
-    return () => setUnauthorizedHandler(null);
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
     const u = await apiLogin(email, password);
+    probeSuperseded.current = true;
     setUser(u);
   }, []);
 
@@ -65,6 +71,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Best-effort: logout is idempotent server-side, so clear client state
     // regardless of the outcome — an HTTP error (already-gone session) or a
     // network failure must not leave the user stuck "logged in" in the UI.
+    probeSuperseded.current = true;
     try {
       await apiLogout();
     } catch {

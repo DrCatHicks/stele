@@ -155,3 +155,83 @@ export async function publishSurvey(surveyId: string, version: number): Promise<
     jsonInit('POST'),
   );
 }
+
+// --- GDPR / erasure (admin) ------------------------------------------------
+
+// A row from the pii.withdrawals erasure audit.
+export interface WithdrawalAudit {
+  id: number;
+  respondent_id: string;
+  requested_at: string;
+  reason: string | null;
+}
+
+// Outcome of a withdrawal trigger; counts are zero on the idempotent repeat path.
+export interface WithdrawalResult {
+  respondent_id: string;
+  requested_at: string;
+  already_withdrawn: boolean;
+  raw_rows_tombstoned: number;
+  responses_purged: number;
+  pii_rows_deleted: number;
+}
+
+export async function listWithdrawals(): Promise<WithdrawalAudit[]> {
+  return request<WithdrawalAudit[]>('/admin/withdrawals');
+}
+
+export async function triggerWithdrawal(
+  respondentId: string,
+  reason?: string,
+): Promise<WithdrawalResult> {
+  return request<WithdrawalResult>(
+    `/respondents/${respondentId}/withdrawal`,
+    jsonInit('POST', { reason: reason ?? null }),
+  );
+}
+
+// --- PII free-text review (reviewer) ---------------------------------------
+
+export type ReviewStatus = 'pending' | 'promoted' | 'rejected';
+
+// A high-risk free-text answer in the screening queue. value_text is the PII the
+// reviewer screens; status is null while pending.
+export interface FreeTextReviewItem {
+  id: number;
+  raw_response_id: number;
+  respondent_id: string;
+  survey_id: string;
+  survey_version: number;
+  question_name: string;
+  value_text: string | null;
+  created_at: string;
+  status: string | null;
+}
+
+export interface FreeTextDecision {
+  free_text_id: number;
+  raw_response_id: number;
+  question_name: string;
+  status: string;
+  reviewed_at: string;
+}
+
+export async function listFreeTextForReview(
+  status: ReviewStatus = 'pending',
+): Promise<FreeTextReviewItem[]> {
+  return request<FreeTextReviewItem[]>(`/admin/pii/free-text?status=${status}`);
+}
+
+export async function promoteFreeText(id: number, note?: string): Promise<FreeTextDecision> {
+  return request<FreeTextDecision>(
+    `/admin/pii/free-text/${id}/promote`,
+    jsonInit('POST', { note: note ?? null }),
+  );
+}
+
+export async function rejectFreeText(id: number, note?: string): Promise<FreeTextDecision> {
+  return request<FreeTextDecision>(
+    `/admin/pii/free-text/${id}/reject`,
+    jsonInit('POST', { note: note ?? null }),
+  );
+}

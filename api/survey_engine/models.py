@@ -112,6 +112,29 @@ class FreeTextResponse(Base):
     )
 
 
+class FreeTextReviewDecision(Base):
+    """Reviewer screening outcome for a high-PII-risk free-text answer (pii schema).
+
+    Keyed by the same (raw_response_id, question_name) grain as FreeTextResponse.
+    Holds only the decision — never the screened text — so dbt can read it to
+    gate value_text in the marts without gaining access to the PII store
+    (design doc §3.9 / §3.10, invariant 6). A "pending" answer has no row here.
+    """
+
+    __tablename__ = "free_text_review_decisions"
+    __table_args__ = {"schema": "pii"}
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    raw_response_id: Mapped[int] = mapped_column(BigInteger)
+    question_name: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text)
+    reviewed_by: Mapped[int | None] = mapped_column(Integer, default=None)
+    reviewed_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+    note: Mapped[str | None] = mapped_column(Text, default=None)
+
+
 class Withdrawal(Base):
     """Audit record that a respondent withdrew and their data was tombstoned.
 

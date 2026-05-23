@@ -1,11 +1,23 @@
 version: 2
 
-# The warehouse reads app.raw_responses and nothing else — it is the sole ETL
-# source (invariant 1/4) and marts must be reproducible from it alone (NFR-1).
-# Declaring any other app table here is a guardrail violation; check_invariants.py
-# rejects anything but raw_responses under the app schema.
+# app.raw_responses is the sole ETL source for response *content* — invariant 1/4,
+# marts reproducible from it alone (NFR-1). check_invariants.py rejects anything
+# but raw_responses under the app schema.
 sources:
   - name: app
     schema: app
     tables:
       - name: raw_responses
+
+  # The reviewer's per-response promote/reject decisions (design doc §3.9/§3.10).
+  # The one ETL input that isn't raw_responses — but it carries NO content: only
+  # the screening decision (no value_text), so invariant 1/4 (raw is the sole
+  # source of content) holds. The invariant checker scopes its "raw_responses
+  # only" rule to the app schema, so a pii source is permitted; stele_etl is
+  # granted SELECT on this table alone (never the PII text in
+  # pii.free_text_responses) by the migration that creates it. fact_response_item
+  # joins it to surface value_text for promoted high-risk free text.
+  - name: pii
+    schema: pii
+    tables:
+      - name: free_text_review_decisions

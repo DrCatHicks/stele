@@ -11,7 +11,8 @@ operator runs deliberately, never behind the public ``stele_api`` connection
 Each action records itself in ``app.db_credential_grants`` (the registry the
 admin-only GET /admin/db-credentials endpoint reads) in the *same transaction* as
 the DDL, so role and audit row commit together or not at all. Passwords are shown
-once on stdout and never stored.
+once on the controlling terminal (``/dev/tty``, never stdout — see
+``_open_secret_sink``) and never stored.
 
 The login role is created NOINHERIT: connecting with it grants nothing until the
 user runs ``SET ROLE <group>``, so an idle or mis-configured connection is
@@ -37,6 +38,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from typing import TextIO
 
 import psycopg
 from psycopg import sql
@@ -45,6 +47,30 @@ from api.auth import provisioning
 
 _DEV_FALLBACK_URL = "postgresql://stele_dev:dev@localhost:5432/stele"
 _FALLBACK_FLAG = "STELE_ALLOW_DEV_FALLBACK"
+_SECRET_SINK_ENV = "STELE_PROVISION_SECRET_SINK"
+
+
+def _open_secret_sink() -> TextIO:
+    """Open the destination for one-time secrets — the controlling terminal, not stdout.
+
+    Defaults to ``/dev/tty``, which refers to the real terminal regardless of how
+    stdout is redirected. So a redirected or captured stdout (a wrapper script, a CI
+    job, ``provision … > file``) receives only the non-secret confirmation, never the
+    password — and with no terminal the command fails closed before any role is
+    created, rather than emitting a credential into a capturable stream. Override the
+    destination with ``STELE_PROVISION_SECRET_SINK`` for non-interactive use (tests).
+
+    Opened up front so provisioning aborts *before* the DDL when there's nowhere safe
+    to show the secret, never leaving a role whose password no one saw.
+    """
+    sink = os.environ.get(_SECRET_SINK_ENV, "/dev/tty")
+    try:
+        return open(sink, "w")  # caller closes; device/terminal path, not a project file
+    except OSError as exc:
+        raise provisioning.ProvisioningError(
+            f"cannot open {sink!r} to show the generated secret: {exc}. Run in an "
+            f"interactive terminal, or set {_SECRET_SINK_ENV} to a writable path."
+        ) from exc
 
 
 def _conninfo() -> str:
@@ -96,45 +122,51 @@ def cmd_provision(args: argparse.Namespace) -> int:
     login_role = provisioning.derive_login_role(access, subject, provisioning.random_suffix())
     password = provisioning.generate_password()
 
-    with psycopg.connect(_conninfo()) as conn:
-        if not _role_exists(conn, group_role):
-            print(
-                f"Group role {group_role!r} does not exist; run the init SQL first.",
-                file=sys.stderr,
-            )
-            return 1
-        existing = _active_credential(conn, subject, access)
-        if existing is not None:
-            print(
-                f"{subject!r} already has an active {access} credential ({existing}). "
-                "Revoke it before provisioning another.",
-                file=sys.stderr,
-            )
-            return 1
-        # Role DDL and the audit row commit together (Postgres role DDL is
-        # transactional), so we never leave a role without its registry record.
-        with conn.transaction():
-            conn.execute(
-                sql.SQL("CREATE ROLE {login} LOGIN PASSWORD {pw} NOINHERIT").format(
-                    login=sql.Identifier(login_role), pw=sql.Literal(password)
+    # Fail closed before any DDL if there's nowhere safe to show the password.
+    secret_out = _open_secret_sink()
+    try:
+        with psycopg.connect(_conninfo()) as conn:
+            if not _role_exists(conn, group_role):
+                print(
+                    f"Group role {group_role!r} does not exist; run the init SQL first.",
+                    file=sys.stderr,
                 )
-            )
-            conn.execute(
-                sql.SQL("GRANT {group} TO {login}").format(
-                    group=sql.Identifier(group_role), login=sql.Identifier(login_role)
+                return 1
+            existing = _active_credential(conn, subject, access)
+            if existing is not None:
+                print(
+                    f"{subject!r} already has an active {access} credential ({existing}). "
+                    "Revoke it before provisioning another.",
+                    file=sys.stderr,
                 )
-            )
-            conn.execute(
-                "INSERT INTO app.db_credential_grants "
-                "(subject_label, access, login_role, status) VALUES (%s, %s, %s, 'active')",
-                (subject, access, login_role),
-            )
+                return 1
+            # Role DDL and the audit row commit together (Postgres role DDL is
+            # transactional), so we never leave a role without its registry record.
+            with conn.transaction():
+                conn.execute(
+                    sql.SQL("CREATE ROLE {login} LOGIN PASSWORD {pw} NOINHERIT").format(
+                        login=sql.Identifier(login_role), pw=sql.Literal(password)
+                    )
+                )
+                conn.execute(
+                    sql.SQL("GRANT {group} TO {login}").format(
+                        group=sql.Identifier(group_role), login=sql.Identifier(login_role)
+                    )
+                )
+                conn.execute(
+                    "INSERT INTO app.db_credential_grants "
+                    "(subject_label, access, login_role, status) VALUES (%s, %s, %s, 'active')",
+                    (subject, access, login_role),
+                )
+        # Success: deliver the password to the terminal only.
+        secret_out.write(f"password for {login_role}: {password}\n")
+    finally:
+        secret_out.close()
 
     print(f"Provisioned {access} credential for {subject}.")
     print(f"  login role : {login_role}")
-    print(f"  password   : {password}")
     print(f"  group role : {group_role}")
-    print("  password is shown once and not stored; record it now.")
+    print("  password written to your terminal (not stdout); record it now — not stored.")
     print(f"  the user connects, then runs:  SET ROLE {group_role};")
     return 0
 
@@ -169,27 +201,32 @@ def cmd_revoke(args: argparse.Namespace) -> int:
 def cmd_rotate(args: argparse.Namespace) -> int:
     login_role: str = args.login_role
     password = provisioning.generate_password()
-    with psycopg.connect(_conninfo()) as conn:
-        row = conn.execute(
-            "SELECT status FROM app.db_credential_grants WHERE login_role = %s",
-            (login_role,),
-        ).fetchone()
-        if row is None or row[0] != "active":
-            print(f"No active credential for login role {login_role!r}.", file=sys.stderr)
-            return 1
-        with conn.transaction():
-            conn.execute(
-                sql.SQL("ALTER ROLE {login} PASSWORD {pw}").format(
-                    login=sql.Identifier(login_role), pw=sql.Literal(password)
-                )
-            )
-            conn.execute(
-                "UPDATE app.db_credential_grants SET rotated_at = now() WHERE login_role = %s",
+    # Fail closed before changing the password if there's nowhere safe to show it.
+    secret_out = _open_secret_sink()
+    try:
+        with psycopg.connect(_conninfo()) as conn:
+            row = conn.execute(
+                "SELECT status FROM app.db_credential_grants WHERE login_role = %s",
                 (login_role,),
-            )
+            ).fetchone()
+            if row is None or row[0] != "active":
+                print(f"No active credential for login role {login_role!r}.", file=sys.stderr)
+                return 1
+            with conn.transaction():
+                conn.execute(
+                    sql.SQL("ALTER ROLE {login} PASSWORD {pw}").format(
+                        login=sql.Identifier(login_role), pw=sql.Literal(password)
+                    )
+                )
+                conn.execute(
+                    "UPDATE app.db_credential_grants SET rotated_at = now() WHERE login_role = %s",
+                    (login_role,),
+                )
+        secret_out.write(f"new password for {login_role}: {password}\n")
+    finally:
+        secret_out.close()
     print(f"Rotated password for {login_role}.")
-    print(f"  password : {password}")
-    print("  password is shown once and not stored; record it now.")
+    print("  new password written to your terminal (not stdout); record it now — not stored.")
     return 0
 
 

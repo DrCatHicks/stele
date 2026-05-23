@@ -28,6 +28,10 @@ from psycopg import sql
 # for the local case where STELE_PROVISION_DATABASE_URL is unset. When CI sets the
 # URL explicitly the flag is moot (the URL wins). Set before the CLI reads it.
 os.environ.setdefault("STELE_ALLOW_DEV_FALLBACK", "1")
+# The CLI shows secrets on /dev/tty and fails closed without one; tests have no
+# terminal, so default the sink to /dev/null. Individual tests override it to a
+# real file when they need to inspect what was written.
+os.environ.setdefault("STELE_PROVISION_SECRET_SINK", os.devnull)
 
 # Load the standalone CLI script (scripts/ is not a package) by path.
 _CLI_PATH = Path(__file__).resolve().parents[2] / "scripts" / "provision_db_credential.py"
@@ -84,13 +88,26 @@ def test_conninfo_strips_sqlalchemy_driver_tag(monkeypatch: pytest.MonkeyPatch) 
 
 
 @_needs_elevated
-def test_provision_then_revoke_roundtrip() -> None:
+def test_provision_then_revoke_roundtrip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     conninfo = _elevated_conninfo()
     subject = f"clitest_{secrets.token_hex(4)}@example.com"
+    # Point the secret sink at a real file so we can prove the password lands there
+    # and NOT on stdout (the CodeQL clear-text-logging concern).
+    sink = tmp_path / "secret.txt"
+    monkeypatch.setenv("STELE_PROVISION_SECRET_SINK", str(sink))
     login_role: str | None = None
     try:
         rc = cli.main(["provision", "--access", "analyst", "--subject", subject])
         assert rc == 0
+
+        # The password is written to the sink, never to stdout.
+        secret_text = sink.read_text()
+        assert "password for " in secret_text
+        password = secret_text.split(": ", 1)[1].strip()
+        assert password
+        assert password not in capsys.readouterr().out
 
         with psycopg.connect(conninfo) as conn:
             row = conn.execute(

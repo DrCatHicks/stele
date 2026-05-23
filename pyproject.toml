@@ -12,6 +12,8 @@ dependencies = [
     "alembic>=1.13",
     "dbt-core>=1.8",
     "dbt-postgres>=1.8",
+    "argon2-cffi>=23.1",
+    "itsdangerous>=2.2",
 ]
 
 [dependency-groups]
@@ -55,6 +57,7 @@ ignore = [
 "api/tests/**" = ["S"]      # security checks too noisy in tests
 "scripts/**" = ["S"]        # the invariant linter reads/parses repo files by design
 "api/survey_engine/models.py" = ["RUF012"]  # SQLAlchemy __table_args__ is not a mutable-default footgun
+"api/auth/models.py" = ["RUF012"]           # same: SQLAlchemy __table_args__
 
 [tool.mypy]
 python_version = "3.12"

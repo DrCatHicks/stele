@@ -19,8 +19,10 @@ privilege-less by default. The printed instructions spell this out.
 
 Connection. Uses STELE_PROVISION_DATABASE_URL — a role with CREATEROLE and ADMIN
 OPTION on the group roles (or a superuser). This is *not* the app's stele_api URL;
-keeping role-DDL privilege out of the request path is the whole point. Falls back
-to the dev superuser with a warning if unset.
+keeping role-DDL privilege out of the request path is the whole point. The var is
+required: rather than guess, an unset URL fails the run, so a missing/misspelled
+var can't silently provision into the wrong database. For local dev against the
+container superuser, opt into the fallback explicitly with STELE_ALLOW_DEV_FALLBACK=1.
 
 Examples:
     uv run python scripts/provision_db_credential.py provision \
@@ -42,15 +44,29 @@ from psycopg import sql
 from api.auth import provisioning
 
 _DEV_FALLBACK_URL = "postgresql://stele_dev:dev@localhost:5432/stele"
+_FALLBACK_FLAG = "STELE_ALLOW_DEV_FALLBACK"
 
 
 def _conninfo() -> str:
-    """Resolve the elevated libpq conninfo, stripping any SQLAlchemy driver tag."""
+    """Resolve the elevated libpq conninfo, stripping any SQLAlchemy driver tag.
+
+    This is a privileged tool that mints Postgres roles, so it refuses to *guess*
+    where to connect: ``STELE_PROVISION_DATABASE_URL`` must be set, or the run
+    fails. Silently defaulting to a hard-coded dev superuser would make a missing
+    or misspelled env var provision into the wrong database. The dev convenience
+    is still available, but only as a deliberate opt-in (``STELE_ALLOW_DEV_FALLBACK=1``).
+    """
     url = os.environ.get("STELE_PROVISION_DATABASE_URL")
     if url is None:
+        if os.environ.get(_FALLBACK_FLAG, "").strip().lower() not in {"1", "true", "yes"}:
+            raise provisioning.ProvisioningError(
+                "STELE_PROVISION_DATABASE_URL is not set. Point it at a role with CREATEROLE "
+                "and ADMIN OPTION on the group roles (a superuser in dev). To use the local "
+                f"dev superuser fallback, opt in explicitly with {_FALLBACK_FLAG}=1."
+            )
         print(
-            "STELE_PROVISION_DATABASE_URL unset; falling back to the dev superuser. "
-            "In production set it to a CREATEROLE role with ADMIN OPTION on the group roles.",
+            f"{_FALLBACK_FLAG} set; using the dev superuser fallback "
+            f"({_DEV_FALLBACK_URL}). Never do this against a real database.",
             file=sys.stderr,
         )
         url = _DEV_FALLBACK_URL

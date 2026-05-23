@@ -44,3 +44,19 @@ class ResponseSubmitOut(BaseModel):
     raw_response_id: int
     respondent_id: uuid.UUID
     submitted_at: datetime
+
+
+class WithdrawalRequest(BaseModel):
+    # Optional note (e.g. ticket reference). Not for PII.
+    reason: str | None = None
+
+
+class WithdrawalOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    respondent_id: uuid.UUID
+    requested_at: datetime
+    already_withdrawn: bool
+    raw_rows_tombstoned: int
+    responses_purged: int
+    pii_rows_deleted: int

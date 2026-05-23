@@ -1,4 +1,5 @@
-// Relative URLs; the Vite dev server proxies /surveys to the API (vite.config.ts).
+// Relative URLs; the Vite dev server proxies /surveys and /auth to the API
+// (vite.config.ts). Cookies (the auth session) ride same-origin automatically.
 const API_BASE = '';
 
 export interface SurveyDetail {
@@ -7,6 +8,16 @@ export interface SurveyDetail {
   status: string;
   definition_hash: string | null;
   definition_json: Record<string, unknown>;
+}
+
+// Metadata-only row from the admin list endpoint — no definition_json.
+export interface SurveySummary {
+  survey_id: string;
+  version: number;
+  status: string;
+  definition_hash: string | null;
+  published_at: string | null;
+  created_at: string;
 }
 
 export interface SubmitBody {
@@ -21,12 +32,73 @@ export interface SubmitResult {
   submitted_at: string;
 }
 
-export async function fetchSurvey(surveyId: string, version: number): Promise<SurveyDetail> {
-  const res = await fetch(`${API_BASE}/surveys/${surveyId}/versions/${version}`);
-  if (!res.ok) {
-    throw new Error(`Failed to load survey (${res.status})`);
+export interface User {
+  id: number;
+  email: string;
+  role: string;
+  disabled: boolean;
+  created_at: string;
+}
+
+/** An HTTP error carrying the status code, so callers can branch on 401 etc. */
+export class ApiError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'ApiError';
   }
-  return (await res.json()) as SurveyDetail;
+}
+
+// AuthContext registers a handler here so a 401 from *any* call (e.g. a session
+// that expired mid-session) clears the cached user and bounces to login, rather
+// than each view having to special-case it.
+type UnauthorizedHandler = () => void;
+let unauthorizedHandler: UnauthorizedHandler | null = null;
+
+export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): void {
+  unauthorizedHandler = handler;
+}
+
+// FastAPI's HTTPException renders {"detail": "..."}; prefer that human-readable
+// reason (the publish gate's 422 messages, 409 conflicts) over a synthetic one.
+async function errorDetail(res: Response): Promise<string | null> {
+  try {
+    const body = (await res.json()) as { detail?: unknown };
+    return typeof body.detail === 'string' ? body.detail : null;
+  } catch {
+    return null;
+  }
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, init);
+  if (!res.ok) {
+    if (res.status === 401) unauthorizedHandler?.();
+    const detail = await errorDetail(res);
+    throw new ApiError(
+      res.status,
+      detail ?? `${init?.method ?? 'GET'} ${path} failed (${res.status})`,
+    );
+  }
+  // 204 (logout) has no body.
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
+}
+
+function jsonInit(method: string, body?: unknown): RequestInit {
+  return {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  };
+}
+
+// --- Respondent-facing (unchanged behavior) --------------------------------
+
+export async function fetchSurvey(surveyId: string, version: number): Promise<SurveyDetail> {
+  return request<SurveyDetail>(`/surveys/${surveyId}/versions/${version}`);
 }
 
 export async function submitResponse(
@@ -34,13 +106,52 @@ export async function submitResponse(
   version: number,
   body: SubmitBody,
 ): Promise<SubmitResult> {
-  const res = await fetch(`${API_BASE}/surveys/${surveyId}/versions/${version}/responses`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    throw new Error(`Failed to submit response (${res.status})`);
-  }
-  return (await res.json()) as SubmitResult;
+  return request<SubmitResult>(
+    `/surveys/${surveyId}/versions/${version}/responses`,
+    jsonInit('POST', body),
+  );
+}
+
+// --- Auth ------------------------------------------------------------------
+
+export async function login(email: string, password: string): Promise<User> {
+  return request<User>('/auth/login', jsonInit('POST', { email, password }));
+}
+
+export async function logout(): Promise<void> {
+  await request<void>('/auth/logout', jsonInit('POST'));
+}
+
+export async function fetchCurrentUser(): Promise<User> {
+  return request<User>('/auth/me');
+}
+
+// --- Authoring (admin) -----------------------------------------------------
+
+export async function listSurveys(): Promise<SurveySummary[]> {
+  return request<SurveySummary[]>('/surveys');
+}
+
+export async function createSurvey(
+  definitionJson: Record<string, unknown>,
+): Promise<SurveySummary> {
+  return request<SurveySummary>('/surveys', jsonInit('POST', { definition_json: definitionJson }));
+}
+
+export async function editSurvey(
+  surveyId: string,
+  version: number,
+  definitionJson: Record<string, unknown>,
+): Promise<SurveySummary> {
+  return request<SurveySummary>(
+    `/surveys/${surveyId}/versions/${version}`,
+    jsonInit('PUT', { definition_json: definitionJson }),
+  );
+}
+
+export async function publishSurvey(surveyId: string, version: number): Promise<SurveySummary> {
+  return request<SurveySummary>(
+    `/surveys/${surveyId}/versions/${version}/publish`,
+    jsonInit('POST'),
+  );
 }

@@ -178,7 +178,7 @@ The database is organized into four schemas with distinct roles and grants:
 | `marts` | Dimensional model and derived variables. Analyst-facing. | ETL |
 | `pii` | Identifying respondent data. Stricter grants. | Survey API, reviewer |
 
-Database roles are scoped per schema with least-privilege grants. The survey API role writes only to `app` and `pii`. The ETL role reads from `app` and writes to `stg` and `marts`. The analyst role reads from `marts` only.
+Database roles are scoped per schema with least-privilege grants. The survey API role writes only to `app` and `pii`. The ETL role reads only the **declared ETL sources** in `app` (currently `app.raw_responses` — granted per-table, not schema-wide, so operator secrets in `app.users`/`app.sessions` and any future table stay out of reach) and writes to `stg` and `marts`. The analyst role reads from `marts` only.
 
 ### 3.4 Operational data model (`app`)
 

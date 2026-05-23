@@ -20,12 +20,23 @@ vi.mock('../api', async (importOriginal) => ({
   logout: vi.fn().mockResolvedValue(undefined),
 }));
 
-const { logout } = await import('../api');
+const { logout, fetchCurrentUser } = await import('../api');
 const mockedLogout = vi.mocked(logout);
+const mockedFetchUser = vi.mocked(fetchCurrentUser);
 
 afterEach(() => {
   vi.clearAllMocks();
 });
+
+function asRole(role: string): void {
+  mockedFetchUser.mockResolvedValue({
+    id: 1,
+    email: `${role}@example.com`,
+    role,
+    disabled: false,
+    created_at: 't',
+  });
+}
 
 function renderLayout() {
   return render(
@@ -59,5 +70,32 @@ describe('AdminLayout', () => {
 
     expect(mockedLogout).toHaveBeenCalledOnce();
     expect(await screen.findByText('Login screen')).toBeInTheDocument();
+  });
+
+  it('shows admins the Surveys + GDPR nav, not PII Review', async () => {
+    asRole('admin');
+    renderLayout();
+    await screen.findByTestId('current-user');
+    expect(screen.getByRole('link', { name: 'Surveys' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'GDPR' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'PII Review' })).not.toBeInTheDocument();
+  });
+
+  it('shows reviewers only the PII Review nav', async () => {
+    asRole('reviewer');
+    renderLayout();
+    await screen.findByTestId('current-user');
+    expect(screen.getByRole('link', { name: 'PII Review' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Surveys' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'GDPR' })).not.toBeInTheDocument();
+  });
+
+  it('shows researchers the Surveys nav only', async () => {
+    asRole('researcher');
+    renderLayout();
+    await screen.findByTestId('current-user');
+    expect(screen.getByRole('link', { name: 'Surveys' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'GDPR' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'PII Review' })).not.toBeInTheDocument();
   });
 });

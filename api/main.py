@@ -12,6 +12,8 @@ from sqlalchemy import text
 from api.auth.provisioning_router import router as db_credentials_router
 from api.auth.router import router as auth_router
 from api.db import SessionDep
+from api.survey_engine.gdpr_router import router as gdpr_router
+from api.survey_engine.pii_review_router import router as pii_review_router
 from api.survey_engine.respondents_router import router as respondents_router
 from api.survey_engine.router import router as surveys_router
 
@@ -20,6 +22,8 @@ app.include_router(auth_router)
 app.include_router(db_credentials_router)
 app.include_router(surveys_router)
 app.include_router(respondents_router)
+app.include_router(gdpr_router)
+app.include_router(pii_review_router)
 
 
 @app.get("/health")

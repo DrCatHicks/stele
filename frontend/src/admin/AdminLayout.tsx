@@ -23,7 +23,15 @@ export function AdminLayout() {
           borderBottom: '1px solid #ddd',
         }}
       >
-        <Link to="/admin">Surveys</Link>
+        <nav style={{ display: 'flex', gap: '1rem' }}>
+          {/* Authors see the survey workspace; admins the GDPR console; reviewers
+              the PII screening queue. Role drives which links appear (design §3.10). */}
+          {user && (user.role === 'researcher' || user.role === 'admin') ? (
+            <Link to="/admin">Surveys</Link>
+          ) : null}
+          {user?.role === 'admin' ? <Link to="/admin/gdpr">GDPR</Link> : null}
+          {user?.role === 'reviewer' ? <Link to="/admin/pii-review">PII Review</Link> : null}
+        </nav>
         <span>
           {user ? (
             <>

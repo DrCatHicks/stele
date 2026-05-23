@@ -15,11 +15,15 @@ Questions:
   ft_high  free-text, pii_risk='high' → redacted in marts; copied to
            pii.free_text_responses for the reviewer
 
+One high-risk free-text answer (R1's ft_high) is then promoted by the reviewer
+path so `dbt build` exercises the promotion round-trip: a promoted high-risk
+response surfaces value_text in the marts while the rest stay redacted.
+
 Expected marts after `dbt build` (printed at the end for the runbook):
   dim_respondent: 4 · dim_survey_version: 1 · dim_question: 4
   dim_question_version: 4 · dim_option: 5
-  fact_response_item: 16 (6 with an option_key · 3 with value_text · 4 redacted)
-  fact_response: 16 · pii.free_text_responses: 2
+  fact_response_item: 16 (6 with an option_key · 4 with value_text · 3 redacted)
+  fact_response: 16 · pii.free_text_responses: 2 · pii.free_text_review_decisions: 1
   q1 selections — a:2  b:1  c:1     q2 selections — x:1  y:1
 """
 
@@ -29,8 +33,11 @@ import asyncio
 import uuid
 from typing import Any
 
+from sqlalchemy import select
+
 from api.db import SessionLocal
 from api.survey_engine import service
+from api.survey_engine.models import FreeTextResponse
 from api.survey_engine.schemas import ResponseSubmit
 
 DEFINITION: dict[str, Any] = {
@@ -108,8 +115,24 @@ async def seed() -> None:
                 ),
             )
 
+        # Reviewer screening pass: promote one high-risk free-text answer so the
+        # marts exercise the promotion round-trip (R1's ft_high, "I lead the
+        # platform team"). reviewer_id is None — no operator row is seeded here.
+        first_high = (
+            await session.execute(
+                select(FreeTextResponse)
+                .where(FreeTextResponse.question_name == "ft_high")
+                .order_by(FreeTextResponse.id)
+                .limit(1)
+            )
+        ).scalar_one()
+        await service.record_free_text_decision(
+            session, first_high.id, reviewer_id=None, status="promoted"
+        )
+
     print(
-        f"Seeded survey {published.survey_id} v{published.version} with {len(SUBMISSIONS)} responses."
+        f"Seeded survey {published.survey_id} v{published.version} with "
+        f"{len(SUBMISSIONS)} responses; promoted 1 high-risk free-text answer."
     )
 
 

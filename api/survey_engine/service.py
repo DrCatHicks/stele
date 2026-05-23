@@ -14,13 +14,14 @@ import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from sqlalchemy import CursorResult, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.survey_engine.models import (
     FreeTextResponse,
+    FreeTextReviewDecision,
     RawResponse,
     Response,
     ResponseItem,
@@ -48,6 +49,10 @@ class InvalidDefinition(Exception):
 
 class SubmissionRejected(Exception):
     """Submission could not be accepted (survey not published, or hash drift)."""
+
+
+class FreeTextResponseNotFound(Exception):
+    """No high-risk free-text answer with the given id (reviewer screening)."""
 
 
 def canonical_hash(definition: dict[str, Any]) -> str:
@@ -325,6 +330,33 @@ async def submit_response(
 
 
 @dataclass(frozen=True)
+class FreeTextReviewItem:
+    """One high-risk free-text answer in the reviewer queue, with its raw-row
+    context and (when decided) screening status. status is None when pending."""
+
+    id: int
+    raw_response_id: int
+    respondent_id: uuid.UUID
+    survey_id: uuid.UUID
+    survey_version: int
+    question_name: str
+    value_text: str | None
+    created_at: datetime
+    status: str | None
+
+
+@dataclass(frozen=True)
+class FreeTextDecisionResult:
+    """Outcome of a recorded promote/reject decision."""
+
+    free_text_id: int
+    raw_response_id: int
+    question_name: str
+    status: str
+    reviewed_at: datetime
+
+
+@dataclass(frozen=True)
 class WithdrawalResult:
     """Outcome of a withdrawal: the audit record plus what this call erased.
 
@@ -432,4 +464,134 @@ async def withdraw_respondent(
         raw_rows_tombstoned=raw_rows_tombstoned,
         responses_purged=responses_purged,
         pii_rows_deleted=pii_rows_deleted,
+    )
+
+
+async def list_withdrawals(
+    session: AsyncSession, limit: int = 100, offset: int = 0
+) -> list[Withdrawal]:
+    """The pii.withdrawals erasure audit, newest first — backs the admin GDPR
+    console. Read-only; the trigger path is withdraw_respondent."""
+    result = await session.execute(
+        select(Withdrawal).order_by(Withdrawal.requested_at.desc()).limit(limit).offset(offset)
+    )
+    return list(result.scalars().all())
+
+
+# Reviewer screening states. 'pending' = a high-risk free-text row with no
+# decision yet (LEFT JOIN miss); the other two read the recorded decision.
+ReviewStatus = Literal["pending", "promoted", "rejected"]
+
+
+async def list_free_text_for_review(
+    session: AsyncSession,
+    status: ReviewStatus = "pending",
+    limit: int = 100,
+    offset: int = 0,
+) -> list[FreeTextReviewItem]:
+    """High-risk free-text answers in the reviewer queue (design §3.9).
+
+    Joins pii.free_text_responses to its raw row (for respondent/survey context)
+    and LEFT JOINs the decision table. 'pending' filters to answers with no
+    decision; 'promoted'/'rejected' filter to the recorded outcome. Carries the
+    screened value_text — gated to the reviewer role at the route.
+    """
+    decision = FreeTextReviewDecision
+    query = (
+        select(
+            FreeTextResponse.id,
+            FreeTextResponse.raw_response_id,
+            RawResponse.respondent_id,
+            RawResponse.survey_id,
+            RawResponse.survey_version,
+            FreeTextResponse.question_name,
+            FreeTextResponse.value_text,
+            FreeTextResponse.created_at,
+            decision.status,
+        )
+        .join(RawResponse, RawResponse.id == FreeTextResponse.raw_response_id)
+        .outerjoin(
+            decision,
+            (decision.raw_response_id == FreeTextResponse.raw_response_id)
+            & (decision.question_name == FreeTextResponse.question_name),
+        )
+        .order_by(FreeTextResponse.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    if status == "pending":
+        query = query.where(decision.status.is_(None))
+    else:
+        query = query.where(decision.status == status)
+
+    rows = (await session.execute(query)).all()
+    return [
+        FreeTextReviewItem(
+            id=r.id,
+            raw_response_id=r.raw_response_id,
+            respondent_id=r.respondent_id,
+            survey_id=r.survey_id,
+            survey_version=r.survey_version,
+            question_name=r.question_name,
+            value_text=r.value_text,
+            created_at=r.created_at,
+            status=r.status,
+        )
+        for r in rows
+    ]
+
+
+async def record_free_text_decision(
+    session: AsyncSession,
+    free_text_id: int,
+    reviewer_id: int | None,
+    status: Literal["promoted", "rejected"],
+    note: str | None = None,
+) -> FreeTextDecisionResult:
+    """Record (or update) a reviewer's promote/reject decision for one high-risk
+    free-text answer. Idempotent: re-deciding the same answer overwrites the prior
+    decision (status, reviewer, timestamp, note) rather than inserting a duplicate
+    — the (raw_response_id, question_name) unique constraint is the anchor.
+
+    Raises FreeTextResponseNotFound if free_text_id is unknown.
+    """
+    free_text = (
+        await session.execute(select(FreeTextResponse).where(FreeTextResponse.id == free_text_id))
+    ).scalar_one_or_none()
+    if free_text is None:
+        raise FreeTextResponseNotFound
+
+    decided_at = datetime.now(UTC)
+    existing = (
+        await session.execute(
+            select(FreeTextReviewDecision).where(
+                FreeTextReviewDecision.raw_response_id == free_text.raw_response_id,
+                FreeTextReviewDecision.question_name == free_text.question_name,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is None:
+        session.add(
+            FreeTextReviewDecision(
+                raw_response_id=free_text.raw_response_id,
+                question_name=free_text.question_name,
+                status=status,
+                reviewed_by=reviewer_id,
+                reviewed_at=decided_at,
+                note=note,
+            )
+        )
+    else:
+        existing.status = status
+        existing.reviewed_by = reviewer_id
+        existing.reviewed_at = decided_at
+        existing.note = note
+
+    await session.commit()
+    return FreeTextDecisionResult(
+        free_text_id=free_text_id,
+        raw_response_id=free_text.raw_response_id,
+        question_name=free_text.question_name,
+        status=status,
+        reviewed_at=decided_at,
     )

@@ -137,6 +137,83 @@ async def test_withdrawal_allowed_for_admin(client: AsyncClient, db_session: Asy
     assert resp.status_code == 200
 
 
+# --- GDPR audit list: gated to {admin} -------------------------------------
+
+WITHDRAWALS_LIST = "/admin/withdrawals"
+
+
+async def test_withdrawals_list_requires_authentication(client: AsyncClient) -> None:
+    resp = await client.get(WITHDRAWALS_LIST)
+    assert resp.status_code == 401
+
+
+@pytest.mark.parametrize("role", ["researcher", "reviewer"])
+async def test_withdrawals_list_forbidden_for_non_admin(
+    client: AsyncClient, db_session: AsyncSession, role: str
+) -> None:
+    await _login_as(client, db_session, role)
+    resp = await client.get(WITHDRAWALS_LIST)
+    assert resp.status_code == 403
+
+
+async def test_withdrawals_list_allowed_for_admin(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await _login_as(client, db_session, "admin")
+    resp = await client.get(WITHDRAWALS_LIST)
+    assert resp.status_code == 200
+
+
+# --- PII review console: gated to {reviewer} -------------------------------
+
+# Decision routes target a nonexistent free-text id: a reviewer clears the gate
+# and gets 404, proving the gate passed without depending on seeded PII.
+PII_REVIEW_ROUTES: list[tuple[str, str, dict[str, Any] | None, int]] = [
+    ("get", "/admin/pii/free-text", None, 200),
+    ("post", "/admin/pii/free-text/999999/promote", {}, 404),
+    ("post", "/admin/pii/free-text/999999/reject", {}, 404),
+]
+GATED_PII_REVIEW = [route[:3] for route in PII_REVIEW_ROUTES]
+
+
+@pytest.mark.parametrize(("method", "path", "body"), GATED_PII_REVIEW)
+async def test_pii_review_requires_authentication(
+    client: AsyncClient, method: str, path: str, body: dict[str, Any] | None
+) -> None:
+    resp = await _call(client, method, path, body)
+    assert resp.status_code == 401
+
+
+@pytest.mark.parametrize("role", ["researcher", "admin"])
+@pytest.mark.parametrize(("method", "path", "body"), GATED_PII_REVIEW)
+async def test_pii_review_forbidden_for_non_reviewer(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    role: str,
+    method: str,
+    path: str,
+    body: dict[str, Any] | None,
+) -> None:
+    # Even admin — "full operator" elsewhere — does not screen PII (design §3.10).
+    await _login_as(client, db_session, role)
+    resp = await _call(client, method, path, body)
+    assert resp.status_code == 403
+
+
+@pytest.mark.parametrize(("method", "path", "body", "expected"), PII_REVIEW_ROUTES)
+async def test_pii_review_allowed_for_reviewer(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    method: str,
+    path: str,
+    body: dict[str, Any] | None,
+    expected: int,
+) -> None:
+    await _login_as(client, db_session, "reviewer")
+    resp = await _call(client, method, path, body)
+    assert resp.status_code == expected
+
+
 # --- Factory misconfiguration fails fast -----------------------------------
 
 

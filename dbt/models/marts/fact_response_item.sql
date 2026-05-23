@@ -7,16 +7,21 @@
 --   shown & skipped  : option_key null, was_shown = true
 --   routed past      : option_key null, was_shown = false
 --
--- value_text carries free-text answers, but ONLY for pii_risk='low' questions
--- (invariant 6). High-risk free text is redacted here (value_text null,
+-- value_text carries free-text answers for pii_risk='low' questions, AND for
+-- high-risk answers a reviewer has individually promoted (design-doc §3.9,
+-- invariant 6). Otherwise high-risk free text is redacted here (value_text null,
 -- value_text_redacted true) and lives in pii.free_text_responses for the
--- reviewer; the default is high, so the safe path is the default (design-doc
--- §3.9). The value_text CASE references pii_risk inline so the invariant-6 lint
--- binds the guard to this statement. occurrence is fixed at 1 until repeating
--- groups land (M4).
+-- reviewer; the default is high, so the safe path is the default. Promotion is a
+-- per-response decision (pii.free_text_review_decisions, keyed by raw_response_id
+-- + question_name) — the one ETL input that isn't raw, and it carries no content,
+-- only the decision. The value_text CASE references pii_risk inline so the
+-- invariant-6 lint binds the guard to this statement. occurrence is fixed at 1
+-- until repeating groups land (M4).
 
 with answers as (
     select
+        a.raw_response_id,
+        a.stable_name,
         a.respondent_id,
         a.answer_value,
         a.was_shown,
@@ -26,6 +31,17 @@ with answers as (
         {{ surrogate_key(['a.stable_name']) }} as question_id,
         {{ surrogate_key(['a.survey_id', 'a.survey_version', 'a.stable_name']) }} as question_version_id
     from {{ ref('int_response_answers') }} as a
+),
+
+-- Reviewer promote/reject decisions, per response+question. 'promoted' lets a
+-- specific high-risk answer reach the marts; absent or 'rejected' keeps it
+-- redacted. No content here — just the decision (design-doc §3.10).
+review_decisions as (
+    select
+        raw_response_id,
+        question_name,
+        status
+    from {{ source('pii', 'free_text_review_decisions') }}
 ),
 
 -- CTE name carries the `fact_response_item` token so the invariant-6 lint (which
@@ -46,11 +62,14 @@ fact_response_item_rows as (
         cast(null as numeric) as value_numeric,
         cast(null as date) as value_date,
         case
-            when a.question_type in ('text', 'comment') and a.pii_risk = 'low'
+            when a.question_type in ('text', 'comment')
+                and (a.pii_risk = 'low' or d.status = 'promoted')
                 then a.answer_value
         end as value_text,
         case
-            when a.question_type in ('text', 'comment') and coalesce(a.pii_risk, 'high') = 'high'
+            when a.question_type in ('text', 'comment')
+                and coalesce(a.pii_risk, 'high') = 'high'
+                and coalesce(d.status, '') != 'promoted'
                 then true
             else false
         end as value_text_redacted,
@@ -60,6 +79,9 @@ fact_response_item_rows as (
     left join {{ ref('dim_option') }} as o
         on a.question_version_id = o.question_version_id
         and a.answer_value = o.value
+    left join review_decisions as d
+        on a.raw_response_id = d.raw_response_id
+        and a.stable_name = d.question_name
 )
 
 select * from fact_response_item_rows

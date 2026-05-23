@@ -25,14 +25,14 @@ def _free_text_definition(pii_risk: str | None, *, rationale: str | None = None)
 
 
 async def _publish_survey(
-    client: AsyncClient, definition: dict[str, Any] | None = None
+    authed_client: AsyncClient, definition: dict[str, Any] | None = None
 ) -> tuple[str, str]:
     """Create + publish a survey; return (survey_id, definition_hash)."""
-    created = await client.post(
+    created = await authed_client.post(
         "/surveys", json={"definition_json": definition or VALID_DEFINITION}
     )
     survey_id = created.json()["survey_id"]
-    published = await client.post(f"/surveys/{survey_id}/versions/1/publish")
+    published = await authed_client.post(f"/surveys/{survey_id}/versions/1/publish")
     return survey_id, published.json()["definition_hash"]
 
 
@@ -52,11 +52,11 @@ async def _free_text_rows(db_session: AsyncSession, survey_id: str) -> list[tupl
 
 
 async def test_submit_persists_raw_and_read_model(
-    client: AsyncClient, db_session: AsyncSession
+    authed_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    survey_id, definition_hash = await _publish_survey(client)
+    survey_id, definition_hash = await _publish_survey(authed_client)
 
-    response = await client.post(
+    response = await authed_client.post(
         f"/surveys/{survey_id}/versions/1/responses",
         json={
             "definition_hash": definition_hash,
@@ -97,13 +97,13 @@ async def test_submit_persists_raw_and_read_model(
 
 
 async def test_submit_embeds_definition_snapshot(
-    client: AsyncClient, db_session: AsyncSession
+    authed_client: AsyncClient, db_session: AsyncSession
 ) -> None:
     """The raw row freezes the published definition + hash so dbt can rebuild
     dimensions from raw_responses alone (invariant 1/4, NFR-1)."""
-    survey_id, definition_hash = await _publish_survey(client)
+    survey_id, definition_hash = await _publish_survey(authed_client)
 
-    await client.post(
+    await authed_client.post(
         f"/surveys/{survey_id}/versions/1/responses",
         json={
             "definition_hash": definition_hash,
@@ -124,9 +124,9 @@ async def test_submit_embeds_definition_snapshot(
     assert snapshot["published_at"] is not None
 
 
-async def test_submit_rejects_hash_drift(client: AsyncClient) -> None:
-    survey_id, _ = await _publish_survey(client)
-    response = await client.post(
+async def test_submit_rejects_hash_drift(authed_client: AsyncClient) -> None:
+    survey_id, _ = await _publish_survey(authed_client)
+    response = await authed_client.post(
         f"/surveys/{survey_id}/versions/1/responses",
         json={
             "definition_hash": "0" * 64,
@@ -137,18 +137,18 @@ async def test_submit_rejects_hash_drift(client: AsyncClient) -> None:
     assert response.status_code == 409
 
 
-async def test_submit_rejects_unpublished(client: AsyncClient) -> None:
-    created = await client.post("/surveys", json={"definition_json": VALID_DEFINITION})
+async def test_submit_rejects_unpublished(authed_client: AsyncClient) -> None:
+    created = await authed_client.post("/surveys", json={"definition_json": VALID_DEFINITION})
     survey_id = created.json()["survey_id"]
-    response = await client.post(
+    response = await authed_client.post(
         f"/surveys/{survey_id}/versions/1/responses",
         json={"definition_hash": "x", "payload": {"q1": "a"}, "shown_questions": ["q1"]},
     )
     assert response.status_code == 409
 
 
-async def test_submit_unknown_survey_404(client: AsyncClient) -> None:
-    response = await client.post(
+async def test_submit_unknown_survey_404(authed_client: AsyncClient) -> None:
+    response = await authed_client.post(
         "/surveys/00000000-0000-0000-0000-000000000000/versions/1/responses",
         json={"definition_hash": "x", "payload": {}, "shown_questions": []},
     )
@@ -156,14 +156,14 @@ async def test_submit_unknown_survey_404(client: AsyncClient) -> None:
 
 
 async def test_high_risk_freetext_routed_to_pii(
-    client: AsyncClient, db_session: AsyncSession
+    authed_client: AsyncClient, db_session: AsyncSession
 ) -> None:
     """High-risk free text lands in the restricted pii store, and the operational
     read-model still keeps a faithful copy of the payload (design doc §3.9)."""
     definition = _free_text_definition("high")
-    survey_id, definition_hash = await _publish_survey(client, definition)
+    survey_id, definition_hash = await _publish_survey(authed_client, definition)
 
-    await client.post(
+    await authed_client.post(
         f"/surveys/{survey_id}/versions/1/responses",
         json={
             "definition_hash": definition_hash,
@@ -188,11 +188,13 @@ async def test_high_risk_freetext_routed_to_pii(
     assert item_value == "my secret note"
 
 
-async def test_low_risk_freetext_not_in_pii(client: AsyncClient, db_session: AsyncSession) -> None:
+async def test_low_risk_freetext_not_in_pii(
+    authed_client: AsyncClient, db_session: AsyncSession
+) -> None:
     definition = _free_text_definition("low", rationale="non-identifying free text")
-    survey_id, definition_hash = await _publish_survey(client, definition)
+    survey_id, definition_hash = await _publish_survey(authed_client, definition)
 
-    await client.post(
+    await authed_client.post(
         f"/surveys/{survey_id}/versions/1/responses",
         json={
             "definition_hash": definition_hash,
@@ -204,12 +206,14 @@ async def test_low_risk_freetext_not_in_pii(client: AsyncClient, db_session: Asy
     assert await _free_text_rows(db_session, survey_id) == []
 
 
-async def test_absent_pii_risk_defaults_high(client: AsyncClient, db_session: AsyncSession) -> None:
+async def test_absent_pii_risk_defaults_high(
+    authed_client: AsyncClient, db_session: AsyncSession
+) -> None:
     """No pii_risk tag → treated as high; value routes to the pii store."""
     definition = _free_text_definition(None)
-    survey_id, definition_hash = await _publish_survey(client, definition)
+    survey_id, definition_hash = await _publish_survey(authed_client, definition)
 
-    await client.post(
+    await authed_client.post(
         f"/surveys/{survey_id}/versions/1/responses",
         json={
             "definition_hash": definition_hash,
@@ -222,12 +226,12 @@ async def test_absent_pii_risk_defaults_high(client: AsyncClient, db_session: As
 
 
 async def test_high_risk_freetext_non_string_is_json_serialized(
-    client: AsyncClient, db_session: AsyncSession
+    authed_client: AsyncClient, db_session: AsyncSession
 ) -> None:
     definition = _free_text_definition("high")
-    survey_id, definition_hash = await _publish_survey(client, definition)
+    survey_id, definition_hash = await _publish_survey(authed_client, definition)
 
-    await client.post(
+    await authed_client.post(
         f"/surveys/{survey_id}/versions/1/responses",
         json={
             "definition_hash": definition_hash,

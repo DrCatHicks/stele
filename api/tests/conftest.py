@@ -59,3 +59,25 @@ async def client(db_session: AsyncSession) -> AsyncIterator[AsyncClient]:
     async with AsyncClient(transport=transport, base_url="http://test") as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+
+ADMIN_EMAIL = "rbac-admin@example.com"
+ADMIN_PASSWORD = "correct-horse-battery-staple"
+
+
+@pytest_asyncio.fixture
+async def authed_client(client: AsyncClient, db_session: AsyncSession) -> AsyncClient:
+    """A ``client`` logged in as an admin.
+
+    Authoring and withdrawal are gated (M3.2); admin clears every operator gate,
+    so tests exercising those endpoints' happy paths depend on this rather than
+    the anonymous ``client``. The login cookie persists in the client jar.
+    """
+    # Imported here so conftest stays import-light and the auth package is only
+    # pulled in when a test actually needs an authenticated client.
+    from api.auth import service
+
+    await service.create_user(db_session, ADMIN_EMAIL, ADMIN_PASSWORD, "admin")
+    resp = await client.post("/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
+    assert resp.status_code == 200
+    return client

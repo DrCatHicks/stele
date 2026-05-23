@@ -6,11 +6,14 @@ cookie — but it lets a forged/corrupted cookie be rejected before any DB looku
 and namespaces the secret to this use (design doc §3.10).
 
 ``current_user`` resolves cookie → session → active user or raises 401.
-RBAC (``require_role``) lands in M3.2 on top of this.
+``require_role`` builds on it: 401 if unauthenticated, 403 if the role isn't
+permitted (design doc §3.10). App roles {admin, researcher, reviewer} are
+authorization carried on the user row, never Postgres grants.
 """
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request
@@ -54,3 +57,21 @@ async def current_user(request: Request, session: SessionDep) -> AuthenticatedUs
 
 
 CurrentUser = Annotated[AuthenticatedUser, Depends(current_user)]
+
+
+def require_role(*roles: str) -> Callable[[AuthenticatedUser], Awaitable[AuthenticatedUser]]:
+    """Dependency factory requiring an authenticated user in one of ``roles``.
+
+    Authentication (401) is delegated to ``current_user``; this layer adds
+    authorization, raising 403 when the session is valid but its role isn't
+    permitted. Returns the user so a gated endpoint that needs the actor can
+    depend on the result directly rather than re-resolving it.
+    """
+    allowed = frozenset(roles)
+
+    async def _require_role(user: CurrentUser) -> AuthenticatedUser:
+        if user.role not in allowed:
+            raise HTTPException(status_code=403, detail="insufficient role")
+        return user
+
+    return _require_role

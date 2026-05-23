@@ -25,25 +25,25 @@ def _free_text_definition(pii_risk: str | None) -> dict[str, Any]:
 
 
 async def _publish_survey(
-    client: AsyncClient, definition: dict[str, Any] | None = None
+    authed_client: AsyncClient, definition: dict[str, Any] | None = None
 ) -> tuple[str, str]:
-    created = await client.post(
+    created = await authed_client.post(
         "/surveys", json={"definition_json": definition or VALID_DEFINITION}
     )
     survey_id = created.json()["survey_id"]
-    published = await client.post(f"/surveys/{survey_id}/versions/1/publish")
+    published = await authed_client.post(f"/surveys/{survey_id}/versions/1/publish")
     return survey_id, published.json()["definition_hash"]
 
 
 async def _submit(
-    client: AsyncClient,
+    authed_client: AsyncClient,
     survey_id: str,
     definition_hash: str,
     respondent_id: str,
     payload: dict[str, Any],
 ) -> int:
     """Submit a response for a fixed respondent; return its raw_response_id."""
-    response = await client.post(
+    response = await authed_client.post(
         f"/surveys/{survey_id}/versions/1/responses",
         json={
             "definition_hash": definition_hash,
@@ -61,14 +61,14 @@ async def _scalar(db_session: AsyncSession, sql: str, **params: Any) -> Any:
 
 
 async def test_withdrawal_nulls_raw_content_keeps_row(
-    client: AsyncClient, db_session: AsyncSession
+    authed_client: AsyncClient, db_session: AsyncSession
 ) -> None:
     """The raw row survives (audit log stays structurally complete) but every
     content column is nulled; the identifying/structural columns are preserved."""
-    survey_id, definition_hash = await _publish_survey(client)
-    await _submit(client, survey_id, definition_hash, RESPONDENT, {"q1": "a"})
+    survey_id, definition_hash = await _publish_survey(authed_client)
+    await _submit(authed_client, survey_id, definition_hash, RESPONDENT, {"q1": "a"})
 
-    result = await client.post(f"/respondents/{RESPONDENT}/withdrawal", json={})
+    result = await authed_client.post(f"/respondents/{RESPONDENT}/withdrawal", json={})
     assert result.status_code == 200
 
     # Assert SQL NULL, not a JSON 'null' scalar: a JSONB column set to JSON null
@@ -100,11 +100,13 @@ async def test_withdrawal_nulls_raw_content_keeps_row(
     assert row.submitted_at is not None
 
 
-async def test_withdrawal_purges_read_model(client: AsyncClient, db_session: AsyncSession) -> None:
-    survey_id, definition_hash = await _publish_survey(client)
-    await _submit(client, survey_id, definition_hash, RESPONDENT, {"q1": "a"})
+async def test_withdrawal_purges_read_model(
+    authed_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    survey_id, definition_hash = await _publish_survey(authed_client)
+    await _submit(authed_client, survey_id, definition_hash, RESPONDENT, {"q1": "a"})
 
-    await client.post(f"/respondents/{RESPONDENT}/withdrawal", json={})
+    await authed_client.post(f"/respondents/{RESPONDENT}/withdrawal", json={})
 
     responses = await _scalar(
         db_session,
@@ -122,12 +124,12 @@ async def test_withdrawal_purges_read_model(client: AsyncClient, db_session: Asy
     assert items == 0
 
 
-async def test_withdrawal_deletes_pii(client: AsyncClient, db_session: AsyncSession) -> None:
+async def test_withdrawal_deletes_pii(authed_client: AsyncClient, db_session: AsyncSession) -> None:
     """The PII copy must be explicitly deleted: the raw row is NULL-tombstoned,
     not deleted, so the ON DELETE CASCADE on pii.free_text_responses never fires."""
-    survey_id, definition_hash = await _publish_survey(client, _free_text_definition("high"))
+    survey_id, definition_hash = await _publish_survey(authed_client, _free_text_definition("high"))
     raw_id = await _submit(
-        client, survey_id, definition_hash, RESPONDENT, {"ft1": "my secret note"}
+        authed_client, survey_id, definition_hash, RESPONDENT, {"ft1": "my secret note"}
     )
     # Precondition: the PII row exists before withdrawal.
     assert (
@@ -139,7 +141,7 @@ async def test_withdrawal_deletes_pii(client: AsyncClient, db_session: AsyncSess
         == 1
     )
 
-    await client.post(f"/respondents/{RESPONDENT}/withdrawal", json={})
+    await authed_client.post(f"/respondents/{RESPONDENT}/withdrawal", json={})
 
     assert (
         await _scalar(
@@ -152,12 +154,12 @@ async def test_withdrawal_deletes_pii(client: AsyncClient, db_session: AsyncSess
 
 
 async def test_withdrawal_records_withdrawal_row(
-    client: AsyncClient, db_session: AsyncSession
+    authed_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    survey_id, definition_hash = await _publish_survey(client, _free_text_definition("high"))
-    await _submit(client, survey_id, definition_hash, RESPONDENT, {"ft1": "secret"})
+    survey_id, definition_hash = await _publish_survey(authed_client, _free_text_definition("high"))
+    await _submit(authed_client, survey_id, definition_hash, RESPONDENT, {"ft1": "secret"})
 
-    result = await client.post(
+    result = await authed_client.post(
         f"/respondents/{RESPONDENT}/withdrawal", json={"reason": "ticket-123"}
     )
     body = result.json()
@@ -181,17 +183,17 @@ async def test_withdrawal_records_withdrawal_row(
 
 
 async def test_withdrawal_idempotent_already_withdrawn(
-    client: AsyncClient, db_session: AsyncSession
+    authed_client: AsyncClient, db_session: AsyncSession
 ) -> None:
     """A repeat request returns 200 with already_withdrawn + zero counts, leaves
     a single withdrawal record, and does not touch the original timestamp."""
-    survey_id, definition_hash = await _publish_survey(client)
-    await _submit(client, survey_id, definition_hash, RESPONDENT, {"q1": "a"})
+    survey_id, definition_hash = await _publish_survey(authed_client)
+    await _submit(authed_client, survey_id, definition_hash, RESPONDENT, {"q1": "a"})
 
-    first = await client.post(f"/respondents/{RESPONDENT}/withdrawal", json={})
+    first = await authed_client.post(f"/respondents/{RESPONDENT}/withdrawal", json={})
     first_requested_at = first.json()["requested_at"]
 
-    second = await client.post(f"/respondents/{RESPONDENT}/withdrawal", json={})
+    second = await authed_client.post(f"/respondents/{RESPONDENT}/withdrawal", json={})
     assert second.status_code == 200
     body = second.json()
     assert body["already_withdrawn"] is True
@@ -209,11 +211,11 @@ async def test_withdrawal_idempotent_already_withdrawn(
 
 
 async def test_withdrawal_respondent_with_no_data(
-    client: AsyncClient, db_session: AsyncSession
+    authed_client: AsyncClient, db_session: AsyncSession
 ) -> None:
     """A withdrawal for a respondent who never submitted is honored and recorded
     with zero counts (the request is satisfied; there's simply nothing to erase)."""
-    result = await client.post(f"/respondents/{RESPONDENT}/withdrawal", json={})
+    result = await authed_client.post(f"/respondents/{RESPONDENT}/withdrawal", json={})
     assert result.status_code == 200
     body = result.json()
     assert body["already_withdrawn"] is False
@@ -230,15 +232,15 @@ async def test_withdrawal_respondent_with_no_data(
 
 
 async def test_withdrawal_multi_survey_respondent(
-    client: AsyncClient, db_session: AsyncSession
+    authed_client: AsyncClient, db_session: AsyncSession
 ) -> None:
     """One withdrawal tombstones the respondent across every survey they answered."""
-    survey_a, hash_a = await _publish_survey(client)
-    survey_b, hash_b = await _publish_survey(client)
-    await _submit(client, survey_a, hash_a, RESPONDENT, {"q1": "a"})
-    await _submit(client, survey_b, hash_b, RESPONDENT, {"q1": "b"})
+    survey_a, hash_a = await _publish_survey(authed_client)
+    survey_b, hash_b = await _publish_survey(authed_client)
+    await _submit(authed_client, survey_a, hash_a, RESPONDENT, {"q1": "a"})
+    await _submit(authed_client, survey_b, hash_b, RESPONDENT, {"q1": "b"})
 
-    result = await client.post(f"/respondents/{RESPONDENT}/withdrawal", json={})
+    result = await authed_client.post(f"/respondents/{RESPONDENT}/withdrawal", json={})
     assert result.json()["raw_rows_tombstoned"] == 2
 
     # No non-tombstoned raw row remains for the respondent.
@@ -258,16 +260,16 @@ async def test_withdrawal_multi_survey_respondent(
 
 
 async def test_withdrawal_does_not_affect_other_respondents(
-    client: AsyncClient, db_session: AsyncSession
+    authed_client: AsyncClient, db_session: AsyncSession
 ) -> None:
     """Withdrawal is scoped strictly to the named respondent."""
-    survey_id, definition_hash = await _publish_survey(client, _free_text_definition("high"))
-    await _submit(client, survey_id, definition_hash, RESPONDENT, {"ft1": "mine"})
+    survey_id, definition_hash = await _publish_survey(authed_client, _free_text_definition("high"))
+    await _submit(authed_client, survey_id, definition_hash, RESPONDENT, {"ft1": "mine"})
     other_raw = await _submit(
-        client, survey_id, definition_hash, OTHER_RESPONDENT, {"ft1": "theirs"}
+        authed_client, survey_id, definition_hash, OTHER_RESPONDENT, {"ft1": "theirs"}
     )
 
-    await client.post(f"/respondents/{RESPONDENT}/withdrawal", json={})
+    await authed_client.post(f"/respondents/{RESPONDENT}/withdrawal", json={})
 
     # The other respondent's raw content, read-model, and PII are untouched.
     other_payload = await _scalar(

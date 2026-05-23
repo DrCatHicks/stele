@@ -14,9 +14,9 @@ import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
-from sqlalchemy import func, select
+from sqlalchemy import CursorResult, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.survey_engine.models import (
@@ -25,6 +25,7 @@ from api.survey_engine.models import (
     Response,
     ResponseItem,
     SurveyDefinition,
+    Withdrawal,
 )
 from api.survey_engine.schemas import ResponseSubmit
 
@@ -305,3 +306,114 @@ async def submit_response(
     await session.commit()
     await session.refresh(response)
     return response
+
+
+@dataclass(frozen=True)
+class WithdrawalResult:
+    """Outcome of a withdrawal: the audit record plus what this call erased.
+
+    On the idempotent path (respondent already withdrawn) the counts are zero
+    and `already_withdrawn` is true — the original `requested_at` is preserved.
+    """
+
+    respondent_id: uuid.UUID
+    requested_at: datetime
+    already_withdrawn: bool
+    raw_rows_tombstoned: int
+    responses_purged: int
+    pii_rows_deleted: int
+
+
+async def withdraw_respondent(
+    session: AsyncSession, respondent_id: uuid.UUID, reason: str | None = None
+) -> WithdrawalResult:
+    """Tombstone every trace of a respondent across all surveys, in one
+    transaction (design doc §3.8 steps 1,2,3,5). Step 4 (marts) is automatic on
+    the next dbt build: stg_raw_responses excludes the now-null-snapshot rows.
+
+    Erasure is idempotent by nature: a repeat request for an already-withdrawn
+    respondent returns the existing record with zero counts, without
+    re-processing or overwriting the original timestamp. A respondent with no
+    responses is still recorded as withdrawn (request honored, zero counts).
+    """
+    existing = (
+        await session.execute(select(Withdrawal).where(Withdrawal.respondent_id == respondent_id))
+    ).scalar_one_or_none()
+    if existing is not None:
+        return WithdrawalResult(
+            respondent_id=respondent_id,
+            requested_at=existing.requested_at,
+            already_withdrawn=True,
+            raw_rows_tombstoned=0,
+            responses_purged=0,
+            pii_rows_deleted=0,
+        )
+
+    # Step 1 — record the withdrawal. The unique constraint on respondent_id is
+    # the real guard against a concurrent double-request; the check above just
+    # makes the common repeat case a clean no-op.
+    requested_at = datetime.now(UTC)
+    session.add(Withdrawal(respondent_id=respondent_id, requested_at=requested_at, reason=reason))
+    await session.flush()
+
+    # Resolve the raw_response_ids up front. pii.free_text_responses cascades
+    # only on a raw-row DELETE, and the tombstone NULLs (never deletes) raw
+    # rows, so the PII deletion must be explicit (invariant 1 / design §3.8).
+    raw_ids = (
+        (
+            await session.execute(
+                select(RawResponse.id).where(RawResponse.respondent_id == respondent_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    # Step 5 — delete the PII copy first (erase identifying data as early as
+    # possible). No-op when the respondent had no high-risk free text.
+    pii_rows_deleted = 0
+    if raw_ids:
+        pii_result = cast(
+            "CursorResult[Any]",
+            await session.execute(
+                delete(FreeTextResponse).where(FreeTextResponse.raw_response_id.in_(raw_ids))
+            ),
+        )
+        pii_rows_deleted = pii_result.rowcount or 0
+
+    # Step 3 — purge the rebuildable read-model. response_items rows cascade via
+    # the ON DELETE CASCADE FK on response_items.response_id.
+    responses_result = cast(
+        "CursorResult[Any]",
+        await session.execute(delete(Response).where(Response.respondent_id == respondent_id)),
+    )
+    responses_purged = responses_result.rowcount or 0
+
+    # Step 2 — tombstone raw: null the four content columns, keep the row so the
+    # append-only audit log stays structurally complete. This is the sole
+    # sanctioned UPDATE of raw_responses (CLAUDE.md / design §3.8); id,
+    # respondent_id, survey_id, survey_version and submitted_at are preserved.
+    raw_result = cast(
+        "CursorResult[Any]",
+        await session.execute(
+            update(RawResponse)
+            .where(RawResponse.respondent_id == respondent_id)
+            .values(
+                payload=None,
+                shown_questions=None,
+                client_metadata=None,
+                definition_snapshot=None,
+            )
+        ),
+    )
+    raw_rows_tombstoned = raw_result.rowcount or 0
+
+    await session.commit()
+    return WithdrawalResult(
+        respondent_id=respondent_id,
+        requested_at=requested_at,
+        already_withdrawn=False,
+        raw_rows_tombstoned=raw_rows_tombstoned,
+        responses_purged=responses_purged,
+        pii_rows_deleted=pii_rows_deleted,
+    )

@@ -47,15 +47,26 @@ class RawResponse(Base):
     submitted_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()")
     )
-    payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)
-    shown_questions: Mapped[list[Any] | None] = mapped_column(JSONB, default=None)
-    client_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)
+    # none_as_null=True so writing None yields SQL NULL, not a JSON 'null' scalar.
+    # The tombstone workflow nulls these columns, and dbt's stg_raw_responses
+    # excludes withdrawn rows via `definition_snapshot is not null` — a JSON-null
+    # scalar would slip past that filter (jsonb_typeof = 'null', but IS NOT NULL),
+    # leaking a withdrawn respondent into the warehouse.
+    payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True), default=None)
+    shown_questions: Mapped[list[Any] | None] = mapped_column(
+        JSONB(none_as_null=True), default=None
+    )
+    client_metadata: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB(none_as_null=True), default=None
+    )
     # Frozen copy of the published definition (+ its hash and published_at) the
     # response was answered against. Lets dbt build dimensions from raw_responses
     # alone — keeping it the sole, reproducible ETL source (invariant 1/4, NFR-1)
     # — without reading app.survey_definitions. Nullable like the other content
     # columns so the M2 tombstone workflow can null it on withdrawal.
-    definition_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)
+    definition_snapshot: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB(none_as_null=True), default=None
+    )
 
 
 class Response(Base):
@@ -99,3 +110,22 @@ class FreeTextResponse(Base):
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()")
     )
+
+
+class Withdrawal(Base):
+    """Audit record that a respondent withdrew and their data was tombstoned.
+
+    Retained as evidence the erasure happened (design doc §3.8). Lives in the
+    pii schema because respondent_id is identifying and the schema is out of
+    dbt's reach. Unique on respondent_id (one withdrawal per respondent).
+    """
+
+    __tablename__ = "withdrawals"
+    __table_args__ = {"schema": "pii"}
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    respondent_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    requested_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+    reason: Mapped[str | None] = mapped_column(Text, default=None)

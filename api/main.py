@@ -9,11 +9,13 @@ from __future__ import annotations
 from fastapi import FastAPI
 from sqlalchemy import text
 
+from api.auth.router import router as auth_router
 from api.db import SessionDep
 from api.survey_engine.respondents_router import router as respondents_router
 from api.survey_engine.router import router as surveys_router
 
 app = FastAPI(title="Survey Engine API")
+app.include_router(auth_router)
 app.include_router(surveys_router)
 app.include_router(respondents_router)
 

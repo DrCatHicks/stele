@@ -14,6 +14,11 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
+# Tests round-trip cookies over plain HTTP (http://test), so a Secure cookie
+# would never be sent back. Force it off for the suite; production keeps the
+# default (Secure on). Set before the app/auth modules read it.
+os.environ.setdefault("STELE_COOKIE_SECURE", "false")
+
 from api.db import get_session
 from api.main import app
 

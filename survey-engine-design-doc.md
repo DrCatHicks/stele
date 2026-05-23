@@ -20,9 +20,9 @@ Primary readers: the engineer building and operating the system, and the researc
 
 ### 1.3 Scope
 
-In scope: survey authoring workflow, response collection and storage, the analytical data model, the transformation pipeline, PII and withdrawal handling, and the operational shape (single Postgres instance, on-demand ETL).
+In scope: survey authoring workflow, response collection and storage, the analytical data model, the transformation pipeline, PII and withdrawal handling, operator authentication and access control (§3.10), and the operational shape (single Postgres instance, on-demand ETL).
 
-Out of scope: respondent recruitment, IRB processes, statistical methodology, dashboard/BI tool selection beyond the warehouse interface, and authentication architecture for survey distribution (assumed handled by the survey URL distribution mechanism).
+Out of scope: respondent recruitment, IRB processes, statistical methodology, dashboard/BI tool selection beyond the warehouse interface, and *respondent-facing* authentication for survey distribution (assumed handled by the survey URL distribution mechanism). Operator authentication and the human access-control model are in scope — see §3.10.
 
 ### 1.4 Goals
 
@@ -450,6 +450,22 @@ The default for any free-text question is `high` unless the researcher explicitl
 
 A designated reviewer can promote individual `high`-risk responses to the analytical marts after a brief screening pass, consolidating the "is this PII" and "does this contain proprietary information" determinations into a single human-in-the-loop checkpoint. If response volume exceeds reviewer capacity, automated PII detection as a first pass may be required.
 
+### 3.10 Administration and access control
+
+The system is operated by a small set of authenticated humans. **Application roles are distinct from the database roles of §3.3:** the API always connects to Postgres as the single least-privileged `stele_api` role; application roles are an authorization concept layered on top, and do *not* map to Postgres roles.
+
+Application roles:
+
+- **admin** — full operator: manages users, triggers withdrawals / GDPR erasure, and provisions analyst and reviewer database credentials.
+- **researcher** — authors, edits, and publishes surveys.
+- **reviewer** — screens `high`-risk free-text and promotes safe responses to the marts (§3.9). Cannot author or publish.
+
+Authentication: credentials are stored with an argon2id hash; sessions are server-side and revocable, carried in a signed, httpOnly, secure cookie. The initial admin is bootstrapped from the environment, never hard-coded.
+
+Operation → role: survey create/edit/publish → researcher or admin; withdrawal / erasure → admin; free-text promotion → reviewer. Respondent submission and survey retrieval remain **unauthenticated** — respondents follow a distributed link.
+
+Analyst and reviewer *data* access is not mediated by the application. Analysts query the `marts` schema and reviewers the `pii` schema directly via Postgres, using the `stele_analyst` / `stele_pii_reviewer` roles of §3.3. The admin provisions, rotates, and revokes those database credentials as an operational procedure.
+
 ---
 
 ## 4. Alternatives considered
@@ -524,6 +540,8 @@ These are reopened when explicit triggers are met, not on a schedule.
 | Single-instance Postgres failure | Standard backup and PITR practice; `raw_responses` immutability ensures full reproducibility from backup. |
 | Shown-set capture incorrect at edge cases (browser back-navigation, conditional toggling mid-session) | Raw `shown_questions` array retained on every submission; richer routing dimensions backfillable without re-collection. |
 | Strict per-version default proves wrong for majority of analyses | `canonical_question_id` and the rationale column let pooling be adopted retroactively; the inversion costs ergonomics, not data. |
+| Compromise of an operator account triggers mass erasure or unauthorized publish | Application-layer RBAC (only admin erases; only researcher/admin publishes); revocable server-side sessions with expiry; argon2id password hashing; the destructive withdrawal endpoint requires the admin role (§3.10). |
+| Application roles confused with database roles (privilege-escalation assumption) | API connects only as `stele_api`; application roles never map to Postgres grants; analyst/reviewer database access is provisioned as separate Postgres credentials (§3.10). |
 
 ---
 
@@ -533,7 +551,7 @@ Inputs that materially shape the design and that should be settled before or sho
 
 1. **Volume and cadence.** Surveys per year, respondents per survey, single ongoing instrument with versioning versus multiple distinct studies.
 2. **Longitudinal scope.** Repeated measurement of the same respondents over time versus primarily cross-sectional snapshots.
-3. **Collaborator profile.** Whether additional researchers — with or without engineering background — will need to author surveys or conduct analyses. This affects the visual-designer question and the access-control model.
+3. **Collaborator profile.** Whether additional researchers — with or without engineering background — will need to author surveys or conduct analyses. **Access-control model resolved (2026-05-23):** application-layer users with roles {admin, researcher, reviewer} on the single `stele_api` connection; analysts and reviewers access the database directly via admin-provisioned Postgres credentials (§3.10). The visual-designer question remains open and is tracked under the SurveyJS Creator deferral (§5).
 4. **Open data intent.** Plans (if any) to publish anonymized datasets. The marts schema must be designed with that target in mind from the outset; pseudonymization alone is insufficient when response patterns are themselves re-identification vectors.
 5. **Free-text volume.** Expected open-ended content per survey and realistic reviewer capacity.
 6. **Scope reduction.** Which proposed components feel disproportionate to the actual study constraints. The proposal is maximalist; most projects should not adopt all of it. The appropriate shape emerges from the answers above.

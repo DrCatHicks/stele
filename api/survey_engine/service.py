@@ -19,6 +19,7 @@ from sqlalchemy import CursorResult, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.survey_engine import round_trip
 from api.survey_engine.models import (
     FreeTextResponse,
     FreeTextReviewDecision,
@@ -28,6 +29,7 @@ from api.survey_engine.models import (
     SurveyDefinition,
     Withdrawal,
 )
+from api.survey_engine.round_trip import RoundTripUnavailable
 from api.survey_engine.schemas import ResponseSubmit
 
 # Publish-time definition validation (schema + lint + PII gate) lives in
@@ -41,6 +43,7 @@ from api.survey_engine.validation import (
 
 __all__ = [
     "InvalidDefinition",
+    "RoundTripUnavailable",
     "extract_free_text_questions",
     "validate_definition",
 ]
@@ -88,12 +91,18 @@ async def _get(
     return result.scalar_one_or_none()
 
 
-async def create_draft(session: AsyncSession, definition_json: dict[str, Any]) -> SurveyDefinition:
+async def create_draft(
+    session: AsyncSession,
+    definition_json: dict[str, Any],
+    for_real_respondents: bool | None = None,
+) -> SurveyDefinition:
     survey = SurveyDefinition(
         survey_id=uuid.uuid4(),
         version=1,
         definition_json=definition_json,
         status="draft",
+        # Gate by default when the caller doesn't specify.
+        for_real_respondents=True if for_real_respondents is None else for_real_respondents,
     )
     session.add(survey)
     await session.commit()
@@ -116,16 +125,19 @@ async def create_draft_version(
         raise SurveyNotFound(str(survey_id))
 
     definition: dict[str, Any] = {}
+    for_real_respondents = True
     if clone:
         latest = await _get(session, survey_id, max_version)
         if latest is not None:
             definition = dict(latest.definition_json)
+            for_real_respondents = latest.for_real_respondents
 
     survey = SurveyDefinition(
         survey_id=survey_id,
         version=max_version + 1,
         definition_json=definition,
         status="draft",
+        for_real_respondents=for_real_respondents,
     )
     session.add(survey)
     await session.commit()
@@ -138,6 +150,7 @@ async def edit_draft(
     survey_id: uuid.UUID,
     version: int,
     definition_json: dict[str, Any],
+    for_real_respondents: bool | None = None,
 ) -> SurveyDefinition:
     survey = await _get(session, survey_id, version)
     if survey is None:
@@ -145,6 +158,9 @@ async def edit_draft(
     if survey.status != "draft":
         raise SurveyConflict("published surveys are immutable; create a new draft to make changes")
     survey.definition_json = definition_json
+    # None preserves the existing flag (a definition-only edit shouldn't flip it).
+    if for_real_respondents is not None:
+        survey.for_real_respondents = for_real_respondents
     await session.commit()
     await session.refresh(survey)
     return survey
@@ -156,7 +172,11 @@ async def publish(session: AsyncSession, survey_id: uuid.UUID, version: int) -> 
         raise SurveyNotFound(f"{survey_id} v{version}")
     if survey.status != "draft":
         raise SurveyConflict("survey is already published")
+    # Publish gate, in order (design doc §3.6): schema + lint, then — for surveys
+    # going to real respondents — the headless round-trip, then hash + freeze.
     validate_definition(survey.definition_json)
+    if survey.for_real_respondents:
+        round_trip.run_round_trip(survey.definition_json)
     survey.definition_hash = canonical_hash(survey.definition_json)
     survey.status = "published"
     survey.published_at = datetime.now(UTC)

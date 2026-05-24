@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, Integer, Text, text
+from sqlalchemy import BigInteger, Boolean, Integer, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import TIMESTAMP
@@ -30,6 +30,9 @@ class SurveyDefinition(Base):
     definition_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
     definition_hash: Mapped[str | None] = mapped_column(Text, default=None)
     status: Mapped[str] = mapped_column(Text, server_default="draft")
+    # Whether publishing runs the headless round-trip gate (design doc §3.6).
+    # Default true: gate unless an author opts a sandbox survey out.
+    for_real_respondents: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
     published_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), default=None)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()")

@@ -161,3 +161,110 @@ async def test_decision_on_missing_answer_404(
     await _login_reviewer(client, db_session)
     resp = await client.post(f"/admin/pii/free-text/999999/{action}", json={})
     assert resp.status_code == 404
+
+
+# --- paneldynamic free-text cells: one PII row per occurrence (M5.4) ----------
+
+PANEL_DEFINITION: dict[str, Any] = {
+    "pages": [
+        {
+            "name": "p1",
+            "elements": [
+                {
+                    "type": "paneldynamic",
+                    "name": "devices",
+                    "templateElements": [
+                        {"type": "dropdown", "name": "kind", "choices": ["phone", "laptop"]},
+                        # pii_risk defaults to 'high' when absent.
+                        {"type": "comment", "name": "nickname"},
+                    ],
+                }
+            ],
+        }
+    ]
+}
+
+
+async def _seed_panel_answer(
+    db_session: AsyncSession, nicknames: list[str]
+) -> tuple[str, list[str]]:
+    """Publish the panel survey and submit one response whose `devices` panel has
+    one occurrence per nickname. Returns (composite question_name, unique answers).
+    Answers are suffixed with a shared token so the rows are unambiguous against
+    committed seed data."""
+    token = uuid.uuid4()
+    unique = [f"{n} [{token}]" for n in nicknames]
+    survey = await service.create_draft(db_session, PANEL_DEFINITION)
+    published = await service.publish(db_session, survey.survey_id, survey.version)
+    assert published.definition_hash is not None
+    await service.submit_response(
+        db_session,
+        published.survey_id,
+        published.version,
+        ResponseSubmit(
+            definition_hash=published.definition_hash,
+            payload={
+                "devices": [
+                    {"kind": "phone", "nickname": unique[0]},
+                    {"kind": "laptop", "nickname": unique[1]},
+                ]
+            },
+            shown_questions=["devices"],
+            respondent_id=uuid.uuid4(),
+        ),
+    )
+    return "devices.nickname", unique
+
+
+async def test_panel_free_text_copies_one_pii_row_per_occurrence(
+    db_session: AsyncSession,
+) -> None:
+    """A paneldynamic free-text cell with two occurrences yields two
+    pii.free_text_responses rows, keyed by occurrence, each with its own value."""
+    question_name, unique = await _seed_panel_answer(db_session, ["work phone", "the big one"])
+    rows = (
+        await db_session.execute(
+            text(
+                "SELECT occurrence, value_text FROM pii.free_text_responses "
+                "WHERE question_name = :q AND value_text = ANY(:vals) ORDER BY occurrence"
+            ),
+            {"q": question_name, "vals": unique},
+        )
+    ).all()
+    assert [(r.occurrence, r.value_text) for r in rows] == [(1, unique[0]), (2, unique[1])]
+
+
+async def test_panel_free_text_occurrences_promoted_independently(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The reviewer can promote one occurrence of a panel cell while the other
+    stays pending — the decision is keyed by occurrence, not just question."""
+    question_name, unique = await _seed_panel_answer(db_session, ["alpha", "beta"])
+    await _login_reviewer(client, db_session)
+
+    queue = await client.get("/admin/pii/free-text")
+    items = {r["value_text"]: r for r in queue.json() if r["value_text"] in unique}
+    assert items[unique[0]]["occurrence"] == 1
+    assert items[unique[1]]["occurrence"] == 2
+
+    # Promote occurrence 1 only.
+    promoted = await client.post(f"/admin/pii/free-text/{items[unique[0]]['id']}/promote", json={})
+    assert promoted.status_code == 200
+
+    # The decision row carries occurrence 1; occurrence 2 has no decision.
+    decisions = (
+        await db_session.execute(
+            text(
+                "SELECT occurrence, status FROM pii.free_text_review_decisions "
+                "WHERE question_name = :q AND raw_response_id IN "
+                "(SELECT raw_response_id FROM pii.free_text_responses "
+                " WHERE question_name = :q AND value_text = ANY(:vals)) "
+                "ORDER BY occurrence"
+            ),
+            {"q": question_name, "vals": unique},
+        )
+    ).all()
+    assert [(d.occurrence, d.status) for d in decisions] == [(1, "promoted")]
+
+    pending = await client.get("/admin/pii/free-text", params={"status": "pending"})
+    assert items[unique[1]]["id"] in {r["id"] for r in pending.json()}

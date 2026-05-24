@@ -14,6 +14,17 @@
 -- navigate the nested payload and to resolve the shown-set against the matrix's own
 -- name, and the dims expose them so analysts can pivot without parsing stable_name.
 -- A plain (non-matrix) question carries all three as null and keeps its own name.
+--
+-- A paneldynamic question (M5.4) likewise decomposes into one sub-question per
+-- TEMPLATE ELEMENT (stable_name = "panel.element"), but its occurrences are NOT
+-- fixed in the definition — they're driven by the respondent's answer array — so
+-- this model emits one row per element (no occurrence here); the array position
+-- becomes the fact grain's `occurrence` on the answer side. panel_name /
+-- panel_element carry the decomposition forward exactly as matrix_* do: the panel
+-- name resolves the shown-set (a cell is shown iff its panel is) and the element
+-- name navigates each occurrence object. Unlike a matrix cell, a panel cell keeps
+-- its OWN type (radiogroup/dropdown → option_key; text/comment → value_text) and
+-- pii_risk. matrix_* are null for a panel sub-question and vice versa.
 
 with elements as (
     select
@@ -43,9 +54,11 @@ scalar_questions as (
         display_order,
         cast(null as text) as matrix_name,
         cast(null as text) as matrix_row,
-        cast(null as text) as matrix_column
+        cast(null as text) as matrix_column,
+        cast(null as text) as panel_name,
+        cast(null as text) as panel_element
     from elements
-    where question_type not in ('matrix', 'matrixdropdown')
+    where question_type not in ('matrix', 'matrixdropdown', 'paneldynamic')
 ),
 
 matrix_questions as (
@@ -64,7 +77,9 @@ matrix_questions as (
         e.display_order,
         e.stable_name as matrix_name,
         {{ matrix_value('mrow.value') }} as matrix_row,
-        cast(null as text) as matrix_column
+        cast(null as text) as matrix_column,
+        cast(null as text) as panel_name,
+        cast(null as text) as panel_element
     from elements as e
     cross join lateral jsonb_array_elements(
         case when jsonb_typeof(e.element -> 'rows') = 'array' then e.element -> 'rows' else '[]'::jsonb end
@@ -91,7 +106,9 @@ matrixdropdown_questions as (
         e.display_order,
         e.stable_name as matrix_name,
         {{ matrix_value('mrow.value') }} as matrix_row,
-        mcol.value ->> 'name' as matrix_column
+        mcol.value ->> 'name' as matrix_column,
+        cast(null as text) as panel_name,
+        cast(null as text) as panel_element
     from elements as e
     cross join lateral jsonb_array_elements(
         case when jsonb_typeof(e.element -> 'rows') = 'array' then e.element -> 'rows' else '[]'::jsonb end
@@ -100,6 +117,38 @@ matrixdropdown_questions as (
         case when jsonb_typeof(e.element -> 'columns') = 'array' then e.element -> 'columns' else '[]'::jsonb end
     ) as mcol(value)
     where e.question_type = 'matrixdropdown'
+),
+
+paneldynamic_questions as (
+    -- 'paneldynamic': one sub-question per template element. The element keeps its
+    -- own type + pii_risk (a panel cell is a radiogroup/dropdown → option_key, or a
+    -- text/comment → value_text). Occurrence is answer-driven, so it is NOT here.
+    select
+        e.survey_id,
+        e.survey_version,
+        e.definition_hash,
+        e.published_at,
+        {{ subquestion_name(['e.stable_name', "tmpl.value ->> 'name'"]) }} as stable_name,
+        tmpl.value ->> 'type' as question_type,
+        tmpl.value ->> 'pii_risk' as pii_risk,
+        coalesce(e.element ->> 'title', e.stable_name)
+            || ' — '
+            || coalesce(tmpl.value ->> 'title', tmpl.value ->> 'name') as prompt_text,
+        e.display_order,
+        cast(null as text) as matrix_name,
+        cast(null as text) as matrix_row,
+        cast(null as text) as matrix_column,
+        e.stable_name as panel_name,
+        tmpl.value ->> 'name' as panel_element
+    from elements as e
+    cross join lateral jsonb_array_elements(
+        case
+            when jsonb_typeof(e.element -> 'templateElements') = 'array'
+                then e.element -> 'templateElements'
+            else '[]'::jsonb
+        end
+    ) as tmpl(value)
+    where e.question_type = 'paneldynamic'
 )
 
 select * from scalar_questions
@@ -107,3 +156,5 @@ union all
 select * from matrix_questions
 union all
 select * from matrixdropdown_questions
+union all
+select * from paneldynamic_questions

@@ -18,10 +18,10 @@ fact_shown as (
         fri.fact_id,
         fri.respondent_id,
         fri.survey_version_id,
-        -- A matrix cell sub-question is shown iff its matrix is, so resolve
-        -- against the matrix's own name (the shown-set entry); a plain question
-        -- uses its own stable_name (M5.3).
-        coalesce(dq.matrix_name, dq.stable_name) as shown_name
+        -- A matrix cell (M5.3) or panel cell (M5.4) sub-question is shown iff its
+        -- matrix/panel is, so resolve against that element's own name (the
+        -- shown-set entry); a plain question uses its own stable_name.
+        coalesce(dq.panel_name, dq.matrix_name, dq.stable_name) as shown_name
     from {{ ref('fact_response_item') }} as fri
     inner join {{ ref('dim_question') }} as dq
         on fri.question_id = dq.question_id

@@ -16,10 +16,10 @@
 -- value_text_redacted true) and lives in pii.free_text_responses for the
 -- reviewer; the default is high, so the safe path is the default. Promotion is a
 -- per-response decision (pii.free_text_review_decisions, keyed by raw_response_id
--- + question_name) — the one ETL input that isn't raw, and it carries no content,
--- only the decision. The value_text CASE references pii_risk inline so the
--- invariant-6 lint binds the guard to this statement. occurrence is fixed at 1
--- until repeating groups land (a later M5 story).
+-- + question_name + occurrence) — the one ETL input that isn't raw, and it carries
+-- no content, only the decision. The value_text CASE references pii_risk inline so
+-- the invariant-6 lint binds the guard to this statement. occurrence is the 1-based
+-- panel instance for a paneldynamic cell (M5.4), 1 for every other question.
 
 -- The multi-select fan-out and all answer-side JSON parsing live in
 -- int_response_selections (keeping this marts model portable — JSON confinement
@@ -36,19 +36,22 @@ with selections as (
         s.pii_risk,
         s.option_lookup_value,
         s.selection_ordinal,
+        s.occurrence,
         {{ surrogate_key(['s.survey_id', 's.survey_version']) }} as survey_version_id,
         {{ surrogate_key(['s.stable_name']) }} as question_id,
         {{ surrogate_key(['s.survey_id', 's.survey_version', 's.stable_name']) }} as question_version_id
     from {{ ref('int_response_selections') }} as s
 ),
 
--- Reviewer promote/reject decisions, per response+question. 'promoted' lets a
--- specific high-risk answer reach the marts; absent or 'rejected' keeps it
--- redacted. No content here — just the decision (design-doc §3.10).
+-- Reviewer promote/reject decisions, per response+question+occurrence. 'promoted'
+-- lets a specific high-risk answer reach the marts; absent or 'rejected' keeps it
+-- redacted. occurrence distinguishes a panel cell's repeated answers (M5.4). No
+-- content here — just the decision (design-doc §3.10).
 review_decisions as (
     select
         raw_response_id,
         question_name,
+        occurrence,
         status
     from {{ source('pii', 'free_text_review_decisions') }}
 ),
@@ -68,7 +71,7 @@ fact_response_item_rows as (
         -- value. (A duplicated *resolving* value — which SurveyJS never produces —
         -- would still collide; raw_responses is append-only from the API.)
         {{ surrogate_key([
-            's.respondent_id', 's.survey_version_id', 's.question_id', '1',
+            's.respondent_id', 's.survey_version_id', 's.question_id', 's.occurrence',
             "coalesce(o.option_key, case when s.selection_ordinal is not null "
             "then 'unresolved:' || s.selection_ordinal::text else '' end)"
         ]) }} as fact_id,
@@ -76,7 +79,7 @@ fact_response_item_rows as (
         s.survey_version_id,
         s.question_id,
         s.question_version_id,
-        1 as occurrence,
+        s.occurrence,
         o.option_key,
         cast(null as numeric) as value_numeric,
         cast(null as date) as value_date,
@@ -107,6 +110,7 @@ fact_response_item_rows as (
     left join review_decisions as d
         on s.raw_response_id = d.raw_response_id
         and s.stable_name = d.question_name
+        and s.occurrence = d.occurrence
 )
 
 select * from fact_response_item_rows

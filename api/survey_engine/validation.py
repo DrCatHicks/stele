@@ -62,16 +62,32 @@ MATRIX_TYPES = frozenset({"matrix", "matrixdropdown"})
 # rejected at publish so the answer can't be silently dropped downstream.
 MATRIX_CELL_TYPES = frozenset({"dropdown", "radiogroup"})
 
+# Repeating-group types (M5.4). A paneldynamic repeats a set of templateElements N
+# times; the answer is an *array of objects*, one per occurrence. dbt expands each
+# template element into its own sub-question (stable_name = "panel.element") and
+# the array position drives the fact grain's `occurrence` — so the (respondent,
+# survey_version, question, occurrence, option) grain handles a repeated answer
+# uniformly with a plain one (design-doc §3.5, FR-4 "repeating groups").
+REPEATING_TYPES = frozenset({"paneldynamic"})
+
+# Template-element (panel cell) types we support end-to-end: single-select choices
+# (→ option_key, per occurrence) and free-text (→ value_text / PII store, per
+# occurrence). Multi-select / ranked / scalar / matrix / nested-panel cells need
+# array-of-array fan-out or the dead value_numeric/value_date columns — rejected at
+# publish, deferred with the scalar slice — so a panel answer can't be silently
+# dropped downstream.
+PANEL_CELL_TYPES = CHOICE_TYPES | FREE_TEXT_TYPES
+
 # Question types we support end-to-end enough to publish. A name-bearing element
 # of any other type is rejected — you can't publish a type the runtime, gate and
 # dbt staging don't all handle (CLAUDE.md §"New question type = three places").
 # Still narrow by design: fact_response_item populates option_key (single/multi/
-# ranked choice + matrix cell) and value_text (free-text); value_numeric/value_date
-# stay unpopulated, so rating/numeric/date answers would land as all-null fact rows
-# — silently dropped and indistinguishable from "shown & skipped". Those, plus
-# repeating groups, each rejoin here in a later M5 story alongside their dbt
-# staging + tests.
-KNOWN_QUESTION_TYPES = FREE_TEXT_TYPES | OPTION_TYPES | MATRIX_TYPES
+# ranked choice + matrix cell + panel option cell) and value_text (free-text, incl.
+# panel free-text cells); value_numeric/value_date stay unpopulated, so
+# rating/numeric/date answers would land as all-null fact rows — silently dropped
+# and indistinguishable from "shown & skipped". Those rejoin here in the scalar M5
+# story alongside their dbt staging + tests.
+KNOWN_QUESTION_TYPES = FREE_TEXT_TYPES | OPTION_TYPES | MATRIX_TYPES | REPEATING_TYPES
 
 # SurveyJS context variables that may appear as `{base...}` inside an expression
 # without being a question name (dynamic panels/matrix rows, self-reference). A
@@ -88,11 +104,22 @@ class InvalidDefinition(Exception):
 
 @dataclass(frozen=True)
 class FreeTextQuestion:
-    """A free-text question and its PII-risk tagging, read from the definition."""
+    """A free-text question and its PII-risk tagging, read from the definition.
+
+    For a plain question, `name` is the question name and `panel_name` /
+    `element_name` are None. For a free-text cell inside a paneldynamic (M5.4),
+    `name` is the composite sub-question stable_name ("panel.element") used to key
+    the PII store and join the marts, `panel_name` is the panel's payload key (an
+    array), and `element_name` is the cell's key within each occurrence object —
+    so the submit path can navigate `payload[panel_name][i][element_name]` and copy
+    one PII row per occurrence.
+    """
 
     name: str
     pii_risk: str | None
     pii_risk_rationale: str | None
+    panel_name: str | None = None
+    element_name: str | None = None
 
     @property
     def effective_risk(self) -> str:
@@ -120,11 +147,25 @@ def _iter_elements(definition: dict[str, Any]) -> Iterator[dict[str, Any]]:
             yield element
 
 
+def _panel_template_elements(element: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    """The named template elements of a paneldynamic, in order."""
+    for tmpl in element.get("templateElements", []) or []:
+        if isinstance(tmpl, dict) and tmpl.get("name"):
+            yield tmpl
+
+
 def extract_free_text_questions(definition: dict[str, Any]) -> list[FreeTextQuestion]:
-    """Free-text questions (SurveyJS text/comment) with their pii_risk tagging."""
+    """Free-text questions (SurveyJS text/comment) with their pii_risk tagging.
+
+    Descends into paneldynamic templates (M5.4): a free-text panel cell is one
+    free-text question per the survey definition, but its answer repeats per
+    occurrence — the caller fans the per-occurrence PII rows from `panel_name` /
+    `element_name`.
+    """
     questions: list[FreeTextQuestion] = []
     for element in _iter_elements(definition):
-        if element.get("type") in FREE_TEXT_TYPES and element.get("name"):
+        etype = element.get("type")
+        if etype in FREE_TEXT_TYPES and element.get("name"):
             questions.append(
                 FreeTextQuestion(
                     name=element["name"],
@@ -132,6 +173,19 @@ def extract_free_text_questions(definition: dict[str, Any]) -> list[FreeTextQues
                     pii_risk_rationale=element.get("pii_risk_rationale"),
                 )
             )
+        elif etype in REPEATING_TYPES and element.get("name"):
+            panel = element["name"]
+            for tmpl in _panel_template_elements(element):
+                if tmpl.get("type") in FREE_TEXT_TYPES:
+                    questions.append(
+                        FreeTextQuestion(
+                            name=f"{panel}.{tmpl['name']}",
+                            pii_risk=tmpl.get("pii_risk"),
+                            pii_risk_rationale=tmpl.get("pii_risk_rationale"),
+                            panel_name=panel,
+                            element_name=tmpl["name"],
+                        )
+                    )
     return questions
 
 
@@ -213,13 +267,26 @@ def _validate_questions(definition: dict[str, Any]) -> set[str]:
             # both hash to one question_id and only surface as a dim uniqueness
             # failure at dbt build. Caught at publish as a clear 422 instead.
             for sub_name in _validate_matrix(name, element):
-                if sub_name in names:
-                    raise InvalidDefinition(
-                        f"question {name!r}: matrix sub-question {sub_name!r} collides with "
-                        "another question name"
-                    )
-                names.add(sub_name)
+                _claim_subquestion_name(names, name, sub_name, "matrix")
+        elif qtype in REPEATING_TYPES:
+            # A paneldynamic expands to one sub-question per template element
+            # ("panel.element"); the same composite-name collision applies (a plain
+            # question named "panel.element" would hash to the same question_id).
+            for sub_name in _validate_paneldynamic(name, element):
+                _claim_subquestion_name(names, name, sub_name, "panel")
     return names
+
+
+def _claim_subquestion_name(names: set[str], owner: str, sub_name: str, kind: str) -> None:
+    """Add a composite sub-question stable_name to the question namespace, rejecting
+    a collision with an already-defined question (design discussion: keep stable_name
+    a clean unique identity rather than fold coordinates into the surrogate key)."""
+    if sub_name in names:
+        raise InvalidDefinition(
+            f"question {owner!r}: {kind} sub-question {sub_name!r} collides with "
+            "another question name"
+        )
+    names.add(sub_name)
 
 
 def _validate_choices(name: str, choices: Any) -> None:
@@ -312,6 +379,53 @@ def _validate_matrix(name: str, element: dict[str, Any]) -> list[str]:
     return [f"{name}.{row}.{col}" for row in rows for col in col_names]
 
 
+def _validate_paneldynamic(name: str, element: dict[str, Any]) -> list[str]:
+    """Lint a paneldynamic (repeating group) and return its template sub-question
+    stable_names ("panel.element").
+
+    A panel repeats its `templateElements` N times. Each named element becomes a
+    sub-question; its answer repeats per occurrence (the array drives the fact
+    grain's `occurrence`). We support single-select choice cells (→ option_key) and
+    free-text cells (→ value_text / PII store) end-to-end — other cell types are
+    rejected so a panel answer can't be silently dropped (PANEL_CELL_TYPES). Cell
+    pii_risk is gated by _validate_free_text_pii, which descends into panels too.
+    The composite names mirror dbt's subquestion_name macro and feed the caller's
+    question-name collision guard."""
+    templates = element.get("templateElements")
+    if not isinstance(templates, list) or not templates:
+        raise InvalidDefinition(
+            f"question {name!r}: paneldynamic requires non-empty 'templateElements'"
+        )
+    sub_names: list[str] = []
+    seen: set[str] = set()
+    for tmpl in templates:
+        if not isinstance(tmpl, dict) or not tmpl.get("name"):
+            raise InvalidDefinition(
+                f"question {name!r}: every paneldynamic template element needs a 'name'"
+            )
+        element_name = tmpl["name"]
+        if not isinstance(element_name, str):
+            raise InvalidDefinition(
+                f"question {name!r}: paneldynamic element name must be a string, "
+                f"got {element_name!r}"
+            )
+        if element_name in seen:
+            raise InvalidDefinition(
+                f"question {name!r}: duplicate paneldynamic element {element_name!r}"
+            )
+        seen.add(element_name)
+        cell_type = tmpl.get("type")
+        if cell_type not in PANEL_CELL_TYPES:
+            raise InvalidDefinition(
+                f"question {name!r}: paneldynamic element {element_name!r} type {cell_type!r} "
+                f"is not supported (supported: {', '.join(sorted(PANEL_CELL_TYPES))})"
+            )
+        if cell_type in OPTION_TYPES:
+            _validate_choices(f"{name}.{element_name}", tmpl.get("choices"))
+        sub_names.append(f"{name}.{element_name}")
+    return sub_names
+
+
 def _calculated_value_names(definition: dict[str, Any]) -> set[str]:
     # SurveyJS calculatedValues are legal `{name}` targets in expressions, so
     # they count as defined references (not dangling).
@@ -324,6 +438,32 @@ def _calculated_value_names(definition: dict[str, Any]) -> set[str]:
     return names
 
 
+def _iter_conditional_elements(
+    definition: dict[str, Any],
+) -> Iterator[tuple[dict[str, Any], str]]:
+    """Every element that may carry a visibleIf/enableIf, paired with an owner
+    label for error messages. Beyond top-level questions this descends into the
+    sub-elements a composite type can gate independently: matrix columns
+    (matrixdropdown cells) and paneldynamic template elements. Intra-panel/-matrix
+    conditional cells are idiomatic SurveyJS, so their dangling references must be
+    caught at publish too — the round-trip oracle treats these composite types as
+    non-enumerable drivers and would not flag a dangling cell reference."""
+    for element in _iter_elements(definition):
+        owner = element.get("name") or "<element>"
+        yield element, owner
+        if not isinstance(owner, str):
+            continue
+        if element.get("type") in MATRIX_TYPES:
+            columns = element.get("columns")
+            if isinstance(columns, list):
+                for column in columns:
+                    if isinstance(column, dict):
+                        yield column, f"{owner}.{column.get('name', '<column>')}"
+        elif element.get("type") in REPEATING_TYPES:
+            for tmpl in _panel_template_elements(element):
+                yield tmpl, f"{owner}.{tmpl['name']}"
+
+
 def _validate_visible_if(definition: dict[str, Any], question_names: set[str]) -> None:
     """Reject dangling references: a question's visibleIf/enableIf may only
     reference a defined question or calculatedValue. A publish-time *reference*
@@ -331,11 +471,10 @@ def _validate_visible_if(definition: dict[str, Any], question_names: set[str]) -
     full expression semantics; routing itself is captured at submit, never
     re-evaluated downstream (invariant 3)."""
     defined = question_names | _calculated_value_names(definition)
-    for element in _iter_elements(definition):
+    for element, owner in _iter_conditional_elements(definition):
         for prop in ("visibleIf", "enableIf"):
             for ref in _question_name_refs(element.get(prop)):
                 if ref not in defined:
-                    owner = element.get("name") or "<element>"
                     raise InvalidDefinition(
                         f"question {owner!r}: {prop} references unknown question {ref!r}"
                     )

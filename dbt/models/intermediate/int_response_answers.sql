@@ -15,6 +15,17 @@
 --   answer     : payload -> matrix_name ->> matrix_row              ('matrix')
 --                payload -> matrix_name -> matrix_row ->> column     ('matrixdropdown')
 --   The navigation collapses to payload ->> stable_name for a plain question.
+--
+-- Paneldynamic sub-questions (M5.4) repeat per occurrence: the answer is an ARRAY
+-- at `payload -> panel_name`, one object per occurrence. A LEFT JOIN LATERAL fans
+-- that array out WITH ORDINALITY → one row per occurrence (occurrence = the 1-based
+-- ordinal), with the occurrence object as the answer_base and the element name as
+-- the key. A panel that's unanswered or has no instances yields zero array rows, so
+-- the LEFT JOIN preserves a single routing row (occurrence 1, answered = false) —
+-- shown-skipped / routed-past is never lost. Every non-panel question takes the
+-- same path with a one-element synthetic fan (occurrence fixed at 1).
+--   shown_name : the panel name (a cell is shown iff its panel is).
+--   answer     : (payload -> panel_name)[occurrence] ->> element_name
 
 with responses as (
     select
@@ -37,7 +48,9 @@ questions as (
         pii_risk,
         matrix_name,
         matrix_row,
-        matrix_column
+        matrix_column,
+        panel_name,
+        panel_element
     from {{ ref('int_survey_questions') }}
 ),
 
@@ -51,24 +64,52 @@ navigated as (
         q.stable_name,
         q.question_type,
         q.pii_risk,
+        r.payload,
         r.shown_questions,
-        -- The shown-set entry governing this (sub-)question's visibility.
-        coalesce(q.matrix_name, q.stable_name) as shown_name,
-        -- The jsonb object holding this answer and the key within it.
-        case
-            when q.matrix_name is null then r.payload
-            when q.matrix_column is null then r.payload -> q.matrix_name
-            else r.payload -> q.matrix_name -> q.matrix_row
-        end as answer_base,
-        case
-            when q.matrix_name is null then q.stable_name
-            when q.matrix_column is null then q.matrix_row
-            else q.matrix_column
-        end as answer_key
+        q.matrix_name,
+        q.matrix_row,
+        q.matrix_column,
+        q.panel_name,
+        q.panel_element,
+        -- The shown-set entry governing this (sub-)question's visibility: the panel
+        -- or matrix element's own name, else the question's own stable_name.
+        coalesce(q.panel_name, q.matrix_name, q.stable_name) as shown_name
     from responses as r
     inner join questions as q
         on r.survey_id = q.survey_id
         and r.survey_version = q.survey_version
+),
+
+occurrences as (
+    select
+        n.*,
+        coalesce(inst.ordinality, 1)::int as occurrence,
+        -- The jsonb object holding this answer and the key within it. A panel cell
+        -- reads the occurrence object (inst.value); a matrix/plain question keeps
+        -- the M5.3 navigation.
+        case
+            when n.panel_name is not null then inst.value
+            when n.matrix_name is null then n.payload
+            when n.matrix_column is null then n.payload -> n.matrix_name
+            else n.payload -> n.matrix_name -> n.matrix_row
+        end as answer_base,
+        case
+            when n.panel_name is not null then n.panel_element
+            when n.matrix_name is null then n.stable_name
+            when n.matrix_column is null then n.matrix_row
+            else n.matrix_column
+        end as answer_key
+    from navigated as n
+    -- Fan a paneldynamic answer array into one row per occurrence; a zero-row
+    -- lateral (non-panel, or an unanswered/empty panel) is preserved as a single
+    -- occurrence-1 routing row by the LEFT JOIN.
+    left join lateral jsonb_array_elements(
+        case
+            when n.panel_name is not null and jsonb_typeof(n.payload -> n.panel_name) = 'array'
+                then n.payload -> n.panel_name
+            else '[]'::jsonb
+        end
+    ) with ordinality as inst(value, ordinality) on true
 )
 
 select
@@ -82,6 +123,8 @@ select
     -- value_text on them (free-text + pii_risk='low') without re-parsing.
     question_type,
     pii_risk,
+    -- 1-based panel occurrence; 1 for every non-panel question (invariant 7 grain).
+    occurrence,
     coalesce(jsonb_exists(shown_questions, shown_name), false) as was_shown,
     coalesce(jsonb_exists(answer_base, answer_key), false) as answered,
     -- Scalar text form: single-select option lookup and free-text value_text.
@@ -90,4 +133,4 @@ select
     -- int_response_selections fans out (jsonb_array_elements_text). Carried here so
     -- the warehouse parses the payload once (invariant 4).
     answer_base -> answer_key as answer_json
-from navigated
+from occurrences

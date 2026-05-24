@@ -27,6 +27,12 @@ models:
           visibility (shown_set_integrity / routed_past_not_in_shown_set resolve
           was_shown against this, since the composite stable_name is never in
           shown_questions). Null for a plain (non-matrix) question.
+      - name: panel_name
+        description: >
+          For a paneldynamic cell sub-question (M5.4), the panel element's own name
+          — the shown-set entry governing the cell's visibility (a cell is shown iff
+          its panel is), which shown_set_integrity / routed_past_not_in_shown_set
+          resolve was_shown against. Null for a plain or matrix question.
 
   - name: dim_question_version
     columns:
@@ -47,6 +53,13 @@ models:
           null for a plain question.
       - name: matrix_row
       - name: matrix_column
+      - name: panel_name
+        description: >
+          Repeating-group decomposition (M5.4): the panel element name and the
+          cell's template-element name (panel_element), so a panel can be pivoted
+          without parsing the composite stable_name. Both null for a plain or
+          matrix question.
+      - name: panel_element
 
   - name: dim_option
     columns:
@@ -92,6 +105,13 @@ models:
               arguments:
                 to: ref('dim_question_version')
                 field: question_version_id
+      - name: occurrence
+        description: >
+          1-based panel instance for a paneldynamic cell (M5.4); 1 for every other
+          question. Part of the fact grain (invariant 7). Integrity (occurrence > 1
+          only on panel cells, contiguous 1..N per respondent-panel) is enforced by
+          the paneldynamic_occurrence_integrity singular test.
+        data_tests: [not_null]
       - name: option_key
         # nullable for shown-skipped / routed-past rows; when set it must resolve.
         data_tests:
@@ -129,3 +149,8 @@ models:
               arguments:
                 to: ref('dim_question')
                 field: question_id
+      - name: occurrence
+        description: >
+          1-based panel instance for a paneldynamic cell (M5.4); 1 for every other
+          question. Part of the respondent-question-occurrence grain (invariant 7).
+        data_tests: [not_null]

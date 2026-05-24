@@ -49,10 +49,10 @@ def test_unsupported_question_type_rejected() -> None:
 
 
 def test_not_yet_wired_types_rejected() -> None:
-    # boolean, rating land in a later M5 story with their dbt staging; publishing
-    # one today would silently drop the answer in the warehouse. (checkbox,
-    # ranking, matrix and matrixdropdown are now wired — see the type-specific
-    # tests below.)
+    # boolean, rating land in the scalar M5 story with their dbt staging;
+    # publishing one today would silently drop the answer in the warehouse.
+    # (checkbox, ranking, matrix, matrixdropdown and paneldynamic are now wired —
+    # see the type-specific tests below.)
     for qtype in ("boolean", "rating"):
         with pytest.raises(InvalidDefinition, match="unsupported type"):
             validate_definition(_def({"type": qtype, "name": "q1", "choices": ["a", "b"]}))
@@ -282,6 +282,184 @@ async def test_matrix_missing_row_id_publishes_422(authed_client: AsyncClient) -
     response = await authed_client.post(f"/surveys/{survey_id}/versions/1/publish")
     assert response.status_code == 422
     assert "row is missing an identifier" in response.json()["detail"]
+
+
+# --- paneldynamic / repeating groups (M5.4) ----------------------------------
+
+
+def _paneldynamic(name: str = "panel", **extra: Any) -> dict[str, Any]:
+    # A repeating group with one option cell and one free-text cell — the M5.4
+    # supported surface. Each becomes a "panel.element" sub-question.
+    return {
+        "type": "paneldynamic",
+        "name": name,
+        "templateElements": [
+            {"type": "dropdown", "name": "kind", "choices": ["phone", "laptop"]},
+            {"type": "comment", "name": "nickname", "pii_risk": "high"},
+        ],
+        **extra,
+    }
+
+
+def test_paneldynamic_passes() -> None:
+    # paneldynamic is wired end-to-end (M5.4): option + free-text template cells.
+    validate_definition(_def(_paneldynamic()))
+
+
+def test_paneldynamic_without_template_elements_rejected() -> None:
+    with pytest.raises(InvalidDefinition, match="non-empty 'templateElements'"):
+        validate_definition(_def({"type": "paneldynamic", "name": "panel"}))
+
+
+def test_paneldynamic_empty_template_elements_rejected() -> None:
+    with pytest.raises(InvalidDefinition, match="non-empty 'templateElements'"):
+        validate_definition(_def({"type": "paneldynamic", "name": "panel", "templateElements": []}))
+
+
+def test_paneldynamic_element_without_name_rejected() -> None:
+    definition = _def(
+        {"type": "paneldynamic", "name": "panel", "templateElements": [{"type": "text"}]}
+    )
+    with pytest.raises(InvalidDefinition, match="template element needs a 'name'"):
+        validate_definition(definition)
+
+
+def test_paneldynamic_duplicate_element_rejected() -> None:
+    definition = _def(
+        {
+            "type": "paneldynamic",
+            "name": "panel",
+            "templateElements": [
+                {"type": "text", "name": "dup"},
+                {"type": "text", "name": "dup"},
+            ],
+        }
+    )
+    with pytest.raises(InvalidDefinition, match="duplicate paneldynamic element"):
+        validate_definition(definition)
+
+
+def test_paneldynamic_unsupported_cell_type_rejected() -> None:
+    # checkbox/ranking/scalar/matrix/nested-panel cells need array-of-array fan-out
+    # or the dead numeric/date columns — rejected, deferred with the scalar slice.
+    definition = _def(
+        {
+            "type": "paneldynamic",
+            "name": "panel",
+            "templateElements": [{"type": "checkbox", "name": "c", "choices": ["a", "b"]}],
+        }
+    )
+    with pytest.raises(InvalidDefinition, match="is not supported"):
+        validate_definition(definition)
+
+
+def test_paneldynamic_option_cell_without_choices_rejected() -> None:
+    definition = _def(
+        {
+            "type": "paneldynamic",
+            "name": "panel",
+            "templateElements": [{"type": "dropdown", "name": "kind"}],
+        }
+    )
+    with pytest.raises(InvalidDefinition, match="non-empty 'choices'"):
+        validate_definition(definition)
+
+
+def test_paneldynamic_subquestion_name_collision_rejected() -> None:
+    # _paneldynamic("panel") → sub-question "panel.kind"; a plain question of that
+    # name would hash to the same question_id. Caught at publish, not dbt build.
+    with pytest.raises(InvalidDefinition, match=_NAME_CLASH):
+        validate_definition(_def(_paneldynamic("panel"), {"type": "text", "name": "panel.kind"}))
+
+
+def test_paneldynamic_free_text_cell_low_risk_needs_rationale() -> None:
+    # The free-text PII gate descends into panels: a 'low' panel cell without a
+    # rationale is rejected exactly like a top-level free-text question.
+    definition = _def(
+        {
+            "type": "paneldynamic",
+            "name": "panel",
+            "templateElements": [{"type": "comment", "name": "note", "pii_risk": "low"}],
+        }
+    )
+    with pytest.raises(InvalidDefinition, match="requires a non-empty pii_risk_rationale"):
+        validate_definition(definition)
+
+
+def test_paneldynamic_free_text_cell_low_risk_with_rationale_passes() -> None:
+    definition = _def(
+        {
+            "type": "paneldynamic",
+            "name": "panel",
+            "templateElements": [
+                {
+                    "type": "comment",
+                    "name": "note",
+                    "pii_risk": "low",
+                    "pii_risk_rationale": "screened non-identifying",
+                }
+            ],
+        }
+    )
+    validate_definition(definition)
+
+
+def test_paneldynamic_cell_dangling_visible_if_rejected() -> None:
+    # A visibleIf on a panel template cell must reference a defined question — the
+    # dangling-reference lint descends into panel cells, not just top-level
+    # elements (a cell-level conditional is idiomatic SurveyJS).
+    definition = _def(
+        {
+            "type": "paneldynamic",
+            "name": "panel",
+            "templateElements": [
+                {"type": "dropdown", "name": "kind", "choices": ["a", "b"]},
+                {
+                    "type": "comment",
+                    "name": "why",
+                    "visibleIf": "{ghost} = 'x'",
+                },
+            ],
+        }
+    )
+    with pytest.raises(InvalidDefinition, match="references unknown question 'ghost'"):
+        validate_definition(definition)
+
+
+def test_paneldynamic_cell_visible_if_valid_reference_passes() -> None:
+    # A cell conditioned on a real top-level question is fine.
+    definition = _def(
+        _radio("q1"),
+        {
+            "type": "paneldynamic",
+            "name": "panel",
+            "templateElements": [
+                {"type": "comment", "name": "why", "visibleIf": "{q1} = 'a'"},
+            ],
+        },
+    )
+    validate_definition(definition)
+
+
+def test_matrixdropdown_column_dangling_visible_if_rejected() -> None:
+    # Same descent for matrix columns (matrixdropdown cells).
+    definition = _def(
+        {
+            "type": "matrixdropdown",
+            "name": "md1",
+            "rows": ["r1"],
+            "columns": [
+                {
+                    "name": "c1",
+                    "cellType": "dropdown",
+                    "choices": ["a", "b"],
+                    "visibleIf": "{ghost} = 'x'",
+                }
+            ],
+        }
+    )
+    with pytest.raises(InvalidDefinition, match="references unknown question 'ghost'"):
+        validate_definition(definition)
 
 
 def test_nameless_display_element_ignored() -> None:

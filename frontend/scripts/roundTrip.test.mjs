@@ -131,6 +131,37 @@ describe('analyzeSurvey', () => {
     expect(verdict.unreachable).toEqual([]);
   });
 
+  const paneldynamic = (name, templateElements, extra = {}) => ({
+    type: 'paneldynamic',
+    name,
+    templateElements,
+    ...extra,
+  });
+
+  it('loads a paneldynamic survey without errors', () => {
+    const def = survey(
+      paneldynamic('devices', [
+        { type: 'dropdown', name: 'kind', choices: ['phone', 'laptop'] },
+        { type: 'comment', name: 'nickname' },
+      ]),
+    );
+    const verdict = analyzeSurvey(def);
+    expect(verdict.ok).toBe(true);
+  });
+
+  it('does not flag unreachable when the driver is a paneldynamic question', () => {
+    // A paneldynamic answer is an array of per-occurrence objects, not a scalar; a
+    // cell reference like {devices[0].kind} resolves to base `devices` (the panel),
+    // which is not enumerated — so a panel-gated question is never false-rejected.
+    const def = survey(
+      paneldynamic('devices', [{ type: 'dropdown', name: 'kind', choices: ['phone', 'laptop'] }]),
+      radio('followup', ['x', 'y'], { visibleIf: "{devices[0].kind} = 'nope'" }),
+    );
+    const verdict = analyzeSurvey(def);
+    expect(verdict.ok).toBe(true);
+    expect(verdict.unreachable).toEqual([]);
+  });
+
   it('returns a structured verdict on degenerate input without throwing', () => {
     // survey-core tolerates a null/empty definition (yields an empty model);
     // the M4.1 schema gate is what rejects empty surveys. The oracle must still

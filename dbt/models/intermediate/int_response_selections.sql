@@ -31,6 +31,10 @@ select
     a.stable_name,
     a.question_type,
     a.pii_risk,
+    -- Panel occurrence (M5.4) rides through to the fact grain; 1 for non-panel.
+    -- A panel cell is single-select/free-text, so it never also fans out as a
+    -- multi-selection — occurrence and selection_ordinal stay independent.
+    a.occurrence,
     a.was_shown,
     a.answered,
     a.answer_value,

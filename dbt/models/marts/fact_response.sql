@@ -1,8 +1,9 @@
--- Companion fact at respondent-question grain (invariant 7): "did this respondent
--- see / answer this question" without fanning across options. Carries NO value
--- columns — that distinction is the whole point of having it separate from
--- fact_response_item, so selection counts and respondent counts never get
--- silently conflated.
+-- Companion fact at respondent-question-occurrence grain (invariant 7): "did this
+-- respondent see / answer this (sub-)question" without fanning across options.
+-- Carries NO value columns — that distinction is the whole point of having it
+-- separate from fact_response_item, so selection counts and respondent counts
+-- never get silently conflated. A paneldynamic cell contributes one row per
+-- occurrence (M5.4); every other question is occurrence 1.
 --
 -- Slice assumption: one submission per respondent per version (the seed uses
 -- distinct respondents). Deduping multiple submissions to the same version is
@@ -11,6 +12,7 @@
 with answers as (
     select
         respondent_id,
+        occurrence,
         was_shown,
         answered,
         {{ surrogate_key(['survey_id', 'survey_version']) }} as survey_version_id,
@@ -19,11 +21,12 @@ with answers as (
 )
 
 select
-    {{ surrogate_key(['respondent_id', 'survey_version_id', 'question_id', '1']) }} as response_fact_id,
+    {{ surrogate_key(['respondent_id', 'survey_version_id', 'question_id', 'occurrence']) }}
+        as response_fact_id,
     respondent_id,
     survey_version_id,
     question_id,
-    1 as occurrence,
+    occurrence,
     was_shown,
     answered
 from answers

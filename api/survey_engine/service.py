@@ -37,6 +37,7 @@ from api.survey_engine.schemas import ResponseSubmit
 # validation.py. Re-exported here so callers (router catches
 # service.InvalidDefinition) and submit_response keep one import surface.
 from api.survey_engine.validation import (
+    FreeTextQuestion,
     InvalidDefinition,
     extract_free_text_questions,
     validate_definition,
@@ -78,6 +79,27 @@ def _free_text_answer_to_text(answer: Any) -> str | None:
         return answer
     # Keep non-string JSON payload values auditable and stable in storage.
     return json.dumps(answer, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _high_risk_answers(
+    question: FreeTextQuestion, payload: dict[str, Any]
+) -> list[tuple[int, Any]]:
+    """The (occurrence, answer) pairs to copy into the PII store for one free-text
+    question. A plain question yields at most one pair at occurrence 1; a panel cell
+    (M5.4) yields one per occurrence present in the panel array. Occurrences with
+    the cell key absent are skipped — there's no answer to copy."""
+    if question.panel_name is None:
+        if question.name in payload:
+            return [(1, payload[question.name])]
+        return []
+    instances = payload.get(question.panel_name)
+    if not isinstance(instances, list):
+        return []
+    pairs: list[tuple[int, Any]] = []
+    for occurrence, instance in enumerate(instances, start=1):
+        if isinstance(instance, dict) and question.element_name in instance:
+            pairs.append((occurrence, instance[question.element_name]))
+    return pairs
 
 
 async def _get(
@@ -268,13 +290,21 @@ async def submit_response(
     # reviewer (design doc §3.9). The operational read-model above stays a
     # faithful copy of the payload — same app-schema trust boundary as raw, so
     # redacting it gains nothing; the analyst boundary is the dbt marts.
+    #
+    # A free-text panel cell (paneldynamic, M5.4) repeats per occurrence: its
+    # answer lives at payload[panel][i][element], so copy one row per occurrence,
+    # keyed by the composite "panel.element" name + the 1-based occurrence — the
+    # same grain the marts resolve the promotion decision at. A plain free-text
+    # question is occurrence 1.
     for question in extract_free_text_questions(survey.definition_json):
-        if question.effective_risk == "high" and question.name in submission.payload:
-            answer = submission.payload[question.name]
+        if question.effective_risk != "high":
+            continue
+        for occurrence, answer in _high_risk_answers(question, submission.payload):
             session.add(
                 FreeTextResponse(
                     raw_response_id=raw.id,
                     question_name=question.name,
+                    occurrence=occurrence,
                     value_text=_free_text_answer_to_text(answer),
                     pii_risk="high",
                 )
@@ -296,6 +326,7 @@ class FreeTextReviewItem:
     survey_id: uuid.UUID
     survey_version: int
     question_name: str
+    occurrence: int
     value_text: str | None
     created_at: datetime
     status: str | None
@@ -461,6 +492,7 @@ async def list_free_text_for_review(
             RawResponse.survey_id,
             RawResponse.survey_version,
             FreeTextResponse.question_name,
+            FreeTextResponse.occurrence,
             FreeTextResponse.value_text,
             FreeTextResponse.created_at,
             decision.status,
@@ -469,7 +501,8 @@ async def list_free_text_for_review(
         .outerjoin(
             decision,
             (decision.raw_response_id == FreeTextResponse.raw_response_id)
-            & (decision.question_name == FreeTextResponse.question_name),
+            & (decision.question_name == FreeTextResponse.question_name)
+            & (decision.occurrence == FreeTextResponse.occurrence),
         )
         .order_by(FreeTextResponse.created_at.desc())
         .limit(limit)
@@ -489,6 +522,7 @@ async def list_free_text_for_review(
             survey_id=r.survey_id,
             survey_version=r.survey_version,
             question_name=r.question_name,
+            occurrence=r.occurrence,
             value_text=r.value_text,
             created_at=r.created_at,
             status=r.status,
@@ -507,7 +541,8 @@ async def record_free_text_decision(
     """Record (or update) a reviewer's promote/reject decision for one high-risk
     free-text answer. Idempotent: re-deciding the same answer overwrites the prior
     decision (status, reviewer, timestamp, note) rather than inserting a duplicate
-    — the (raw_response_id, question_name) unique constraint is the anchor.
+    — the (raw_response_id, question_name, occurrence) unique constraint is the
+    anchor (occurrence distinguishes a panel cell's repeated answers, M5.4).
 
     The write is a single-statement INSERT ... ON CONFLICT DO UPDATE so two
     concurrent decisions on the same answer can't race a SELECT-then-write into a
@@ -525,6 +560,7 @@ async def record_free_text_decision(
     insert_stmt = pg_insert(FreeTextReviewDecision).values(
         raw_response_id=free_text.raw_response_id,
         question_name=free_text.question_name,
+        occurrence=free_text.occurrence,
         status=status,
         reviewed_by=reviewer_id,
         reviewed_at=decided_at,
@@ -532,7 +568,7 @@ async def record_free_text_decision(
     )
     await session.execute(
         insert_stmt.on_conflict_do_update(
-            constraint="uq_free_text_review_decisions_raw_question",
+            constraint="uq_free_text_review_decisions_raw_question_occurrence",
             set_={
                 "status": status,
                 "reviewed_by": reviewer_id,

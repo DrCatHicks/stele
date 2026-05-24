@@ -1,0 +1,25 @@
+{
+  "title": "Free-text questions and PII risk",
+  "description": "text (single line) and comment (multi-line). Free-text answers route by pii_risk: 'high' (the default) is kept out of the marts value_text and copied to the PII store for review; 'low' requires an explicit rationale and reaches value_text directly.",
+  "pages": [
+    {
+      "name": "p1",
+      "elements": [
+        {
+          "type": "comment",
+          "name": "role_description",
+          "title": "Describe your role in your own words.",
+          "description": "No pii_risk set, so it defaults to 'high' — free text about a person is treated as identifying until a human says otherwise. Never downgrade because the prompt 'looks innocuous'."
+        },
+        {
+          "type": "text",
+          "name": "favorite_color",
+          "title": "What is your favorite color?",
+          "description": "Downgraded to 'low' with a rationale, so the publish gate accepts it and the answer reaches marts.value_text. The rationale is the researcher's recorded judgment, not a heuristic.",
+          "pii_risk": "low",
+          "pii_risk_rationale": "A single colour word carries no identifying information; safe to surface in the warehouse."
+        }
+      ]
+    }
+  ]
+}

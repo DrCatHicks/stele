@@ -1,0 +1,35 @@
+{
+  "title": "Conditional branching (visibleIf)",
+  "description": "visibleIf routes respondents past questions that don't apply. The shown-set is captured from the engine at submit time and threads to was_shown in marts — shown-skipped and routed-past stay distinguishable; routing is never re-evaluated in SQL (invariant 3). Every gated question must be reachable by some answer, or the round-trip gate rejects publication.",
+  "pages": [
+    {
+      "name": "p1",
+      "elements": [
+        {
+          "type": "radiogroup",
+          "name": "owns_car",
+          "title": "Do you own a car?",
+          "choices": [
+            { "value": "yes", "text": "Yes" },
+            { "value": "no", "text": "No" }
+          ]
+        },
+        {
+          "type": "dropdown",
+          "name": "car_fuel",
+          "title": "What does it run on?",
+          "description": "Reachable only when owns_car = 'yes'. A respondent who answers 'no' is routed past it (was_shown = false), which is not the same as leaving it blank.",
+          "visibleIf": "{owns_car} = 'yes'",
+          "choices": ["petrol", "diesel", "electric", "hybrid"]
+        },
+        {
+          "type": "comment",
+          "name": "no_car_reason",
+          "title": "What's the main reason you don't own one?",
+          "description": "The complementary branch — reachable only when owns_car = 'no'. Defaults to pii_risk 'high'.",
+          "visibleIf": "{owns_car} = 'no'"
+        }
+      ]
+    }
+  ]
+}

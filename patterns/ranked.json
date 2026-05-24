@@ -1,0 +1,29 @@
+{
+  "title": "Ranked questions",
+  "description": "ranking — the ranked-choice type. The answer is an ORDERED array of option values; the array position is the rank (first = rank 1). fact_response_item fans it out to one row per ranked option, each carrying its own option_key AND a rank column. Compare to multi_select.json (checkbox): both fan out to option_key rows, but ranking additionally populates rank, and the order is meaningful.",
+  "pages": [
+    {
+      "name": "p1",
+      "elements": [
+        {
+          "type": "ranking",
+          "name": "priorities",
+          "title": "Rank these from most to least important to you",
+          "description": "Validated exactly like a single-select: a non-empty, duplicate-free `choices` list. Downstream, an ordered answer like [\"quality\", \"speed\", \"cost\"] becomes three fact rows — quality rank 1, speed rank 2, cost rank 3 — one per option_key.",
+          "choices": ["speed", "cost", "quality", "support"]
+        },
+        {
+          "type": "ranking",
+          "name": "channels",
+          "title": "Rank your preferred contact channels",
+          "description": "Object choices carry a stable machine `value` plus a human `text`, just like single-select; dim_option keys on `value` and rank comes from the submitted array order.",
+          "choices": [
+            { "value": "email", "text": "Email" },
+            { "value": "phone", "text": "Phone" },
+            { "value": "sms", "text": "Text message" }
+          ]
+        }
+      ]
+    }
+  ]
+}

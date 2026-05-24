@@ -34,18 +34,25 @@ CHOICE_TYPES = frozenset({"radiogroup", "dropdown"})
 # non-empty, duplicate-free `choices` list) — the difference is only downstream.
 MULTI_SELECT_TYPES = frozenset({"checkbox"})
 
+# Ranked choice types: the answer is an *ordered array* of chosen option values,
+# the array position carrying the rank. dbt fans these out like multi-select —
+# one option_key row per ranked item — but the per-selection ordinal populates
+# fact_response_item.rank (M5.2). Same `choices` lint as the others; the ordering
+# semantics live downstream.
+RANKED_TYPES = frozenset({"ranking"})
+
 # Every option-bearing type shares the same `choices` lint.
-OPTION_TYPES = CHOICE_TYPES | MULTI_SELECT_TYPES
+OPTION_TYPES = CHOICE_TYPES | MULTI_SELECT_TYPES | RANKED_TYPES
 
 # Question types we support end-to-end enough to publish. A name-bearing element
 # of any other type is rejected — you can't publish a type the runtime, gate and
 # dbt staging don't all handle (CLAUDE.md §"New question type = three places").
-# Still narrow by design: fact_response_item populates option_key (single/multi
-# choice) and value_text (free-text); value_numeric/value_date stay unpopulated,
-# so rating/numeric/date answers would land as all-null fact rows — silently
-# dropped and indistinguishable from "shown & skipped". Those, plus matrix /
-# ranking / repeating groups, each rejoin here in a later M5 story alongside
-# their dbt staging + tests.
+# Still narrow by design: fact_response_item populates option_key (single/multi/
+# ranked choice) and value_text (free-text); value_numeric/value_date stay
+# unpopulated, so rating/numeric/date answers would land as all-null fact rows —
+# silently dropped and indistinguishable from "shown & skipped". Those, plus
+# matrix / repeating groups, each rejoin here in a later M5 story alongside their
+# dbt staging + tests.
 KNOWN_QUESTION_TYPES = FREE_TEXT_TYPES | OPTION_TYPES
 
 # SurveyJS context variables that may appear as `{base...}` inside an expression

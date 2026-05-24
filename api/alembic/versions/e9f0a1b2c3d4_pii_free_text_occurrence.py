@@ -49,7 +49,7 @@ def upgrade() -> None:
             "occurrence",
             sa.Integer(),
             nullable=False,
-            server_default="1",
+            server_default=sa.text("1"),
         ),
         schema="pii",
     )
@@ -74,7 +74,7 @@ def upgrade() -> None:
             "occurrence",
             sa.Integer(),
             nullable=False,
-            server_default="1",
+            server_default=sa.text("1"),
         ),
         schema="pii",
     )

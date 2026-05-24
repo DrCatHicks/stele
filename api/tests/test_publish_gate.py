@@ -48,6 +48,14 @@ def test_unsupported_question_type_rejected() -> None:
         validate_definition(_def({"type": "signaturepad", "name": "sig"}))
 
 
+def test_not_yet_wired_types_rejected() -> None:
+    # Multi-select, matrix, boolean, rating land in M5 with their dbt staging;
+    # publishing one today would silently drop the answer in the warehouse.
+    for qtype in ("checkbox", "ranking", "matrix", "boolean", "rating"):
+        with pytest.raises(InvalidDefinition, match="unsupported type"):
+            validate_definition(_def({"type": qtype, "name": "q1", "choices": ["a", "b"]}))
+
+
 def test_nameless_display_element_ignored() -> None:
     # An html block carries no name → not a question, not gated.
     validate_definition(_def({"type": "html", "html": "<p>hi</p>"}, _radio()))
@@ -88,31 +96,26 @@ def test_duplicate_scalar_option_value_rejected() -> None:
 def test_duplicate_object_option_value_rejected() -> None:
     choices = [{"value": "a", "text": "A"}, {"value": "a", "text": "Aagain"}]
     with pytest.raises(InvalidDefinition, match="duplicate option value"):
-        validate_definition(_def({"type": "checkbox", "name": "q1", "choices": choices}))
+        validate_definition(_def({"type": "dropdown", "name": "q1", "choices": choices}))
 
 
 def test_distinct_object_choices_pass() -> None:
     choices = [{"value": "a", "text": "A"}, {"value": "b", "text": "B"}]
-    validate_definition(_def({"type": "checkbox", "name": "q1", "choices": choices}))
+    validate_definition(_def({"type": "dropdown", "name": "q1", "choices": choices}))
 
 
-# --- matrix rows -------------------------------------------------------------
+# --- shape: pages and elements are mutually exclusive (mirrors dbt) ----------
 
 
-def test_matrix_without_rows_rejected() -> None:
-    with pytest.raises(InvalidDefinition, match="non-empty 'rows'"):
-        validate_definition(_def({"type": "matrix", "name": "m1", "columns": ["1", "2"]}))
-
-
-def test_matrix_row_missing_identifier_rejected() -> None:
-    rows = [{"text": "row with no id"}]
-    with pytest.raises(InvalidDefinition, match="missing an identifier"):
-        validate_definition(_def({"type": "matrix", "name": "m1", "rows": rows, "columns": ["1"]}))
-
-
-def test_matrix_with_row_ids_passes() -> None:
-    rows = [{"value": "r1", "text": "Row 1"}, "r2"]
-    validate_definition(_def({"type": "matrix", "name": "m1", "rows": rows, "columns": ["1", "2"]}))
+def test_top_level_elements_ignored_when_pages_present() -> None:
+    # dbt's int_survey_elements uses pages when present and ignores top-level
+    # elements; the validator agrees, so a name reused across the two shapes is
+    # NOT a duplicate (the top-level one is never seen, by either side).
+    definition = {
+        "pages": [{"name": "p1", "elements": [_radio("q1")]}],
+        "elements": [_radio("q1")],
+    }
+    validate_definition(definition)
 
 
 # --- dangling visibleIf ------------------------------------------------------
@@ -132,6 +135,13 @@ def test_valid_visible_if_reference_passes() -> None:
 def test_visible_if_context_var_not_flagged() -> None:
     # {row.x} / {panel.y} are dynamic-context references, not question names.
     definition = _def(_radio("q1", visibleIf="{row.score} > 2"))
+    validate_definition(definition)
+
+
+def test_visible_if_calculated_value_reference_passes() -> None:
+    # A calculatedValue is a legal {name} target, not a dangling reference.
+    definition = _def(_radio("q1", visibleIf="{score} > 2"))
+    definition["calculatedValues"] = [{"name": "score", "expression": "{q1} + 1"}]
     validate_definition(definition)
 
 

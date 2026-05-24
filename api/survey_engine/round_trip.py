@@ -88,8 +88,11 @@ def run_round_trip(definition: dict[str, Any]) -> None:
 
 
 def is_available() -> bool:
-    """True when the oracle script and Node are both present — lets the
-    end-to-end tests skip cleanly where the Node toolchain isn't installed."""
+    """True only when the oracle can actually run: the script, a Node binary on
+    PATH, AND the frontend's survey-core install (the oracle imports it). Node is
+    present on most CI runners even without the frontend deps, so checking for
+    survey-core is what lets the end-to-end tests skip cleanly there."""
     import shutil
 
-    return _ORACLE_SCRIPT.exists() and shutil.which(_NODE_BIN) is not None
+    survey_core = _FRONTEND_DIR / "node_modules" / "survey-core"
+    return _ORACLE_SCRIPT.exists() and survey_core.exists() and shutil.which(_NODE_BIN) is not None

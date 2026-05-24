@@ -93,10 +93,18 @@ export function analyzeSurvey(definition) {
   const driverNames = new Set();
   for (const q of gated) for (const ref of expressionRefs(q.visibleIf)) driverNames.add(ref);
 
-  // Only choice-typed drivers are enumerable; candidates are each option value
-  // plus "unanswered" (undefined).
+  // Only single-select choice drivers are enumerable; candidates are each option
+  // value plus "unanswered" (undefined). Multi-select (checkbox) is deliberately
+  // excluded: its branch space is the power set of its options (exponential), and
+  // setting a single scalar where survey-core expects an array would mis-evaluate
+  // a `{q} contains x` driver and risk a false reject. A question gated by a
+  // checkbox is therefore never flagged unreachable — only load/expression errors
+  // are caught for it. (M5.1; consistent with the never-false-reject contract.)
   const enumerable = [...driverNames].filter(
-    (name) => byName.has(name) && choiceValues(byName.get(name)).length > 0,
+    (name) =>
+      byName.has(name) &&
+      byName.get(name).getType() !== 'checkbox' &&
+      choiceValues(byName.get(name)).length > 0,
   );
   const candidates = enumerable.map((name) => [undefined, ...choiceValues(byName.get(name))]);
 

@@ -37,6 +37,10 @@ models:
     columns:
       - name: option_key
         data_tests: [unique, not_null]
+      - name: value
+        # Guards against a choice-less element (free-text/html) leaking into
+        # dim_option as a NULL-value row — see int_survey_options' CROSS JOIN.
+        data_tests: [not_null]
       - name: question_version_id
         data_tests:
           - not_null

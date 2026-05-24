@@ -49,11 +49,29 @@ def test_unsupported_question_type_rejected() -> None:
 
 
 def test_not_yet_wired_types_rejected() -> None:
-    # Multi-select, matrix, boolean, rating land in M5 with their dbt staging;
-    # publishing one today would silently drop the answer in the warehouse.
-    for qtype in ("checkbox", "ranking", "matrix", "boolean", "rating"):
+    # Matrix, ranking, boolean, rating land in later M5 stories with their dbt
+    # staging; publishing one today would silently drop the answer in the
+    # warehouse. (checkbox is now wired — see test_multi_select_passes.)
+    for qtype in ("ranking", "matrix", "boolean", "rating"):
         with pytest.raises(InvalidDefinition, match="unsupported type"):
             validate_definition(_def({"type": qtype, "name": "q1", "choices": ["a", "b"]}))
+
+
+def test_multi_select_passes() -> None:
+    # checkbox is wired end-to-end (M5.1): validated like a single-select choice,
+    # fanned out to one option_key row per selection in dbt.
+    validate_definition(_def({"type": "checkbox", "name": "q1", "choices": ["a", "b"]}))
+
+
+def test_multi_select_duplicate_option_value_rejected() -> None:
+    # The choices lint is shared with single-select, so dup values are caught.
+    with pytest.raises(InvalidDefinition, match="duplicate option value"):
+        validate_definition(_def({"type": "checkbox", "name": "q1", "choices": ["a", "a"]}))
+
+
+def test_multi_select_without_choices_rejected() -> None:
+    with pytest.raises(InvalidDefinition, match="non-empty 'choices'"):
+        validate_definition(_def({"type": "checkbox", "name": "q1"}))
 
 
 def test_nameless_display_element_ignored() -> None:

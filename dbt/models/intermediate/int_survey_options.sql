@@ -1,6 +1,12 @@
 -- One row per choice per question per version. SurveyJS choices are either plain
 -- scalars ("a") or objects ({"value": "a", "text": "Apple"}); normalize both to a
 -- value + label. `#>> '{}'` extracts a scalar jsonb element as unquoted text.
+--
+-- CROSS JOIN LATERAL (not LEFT): a choice-less element — free-text, html, etc. —
+-- yields zero rows from jsonb_array_elements and is dropped entirely. A LEFT JOIN
+-- would instead preserve such an element as a spurious NULL-value option row,
+-- silently inflating dim_option with rows no answer can ever resolve to (guarded
+-- by the not_null test on dim_option.value).
 
 with options as (
     select
@@ -10,12 +16,12 @@ with options as (
         choice.value as choice,
         choice.ordinality::int as display_order
     from {{ ref('int_survey_elements') }} as e
-    left join lateral jsonb_array_elements(
+    cross join lateral jsonb_array_elements(
         case
             when jsonb_typeof(e.element -> 'choices') = 'array' then e.element -> 'choices'
             else '[]'::jsonb
         end
-    ) with ordinality as choice(value, ordinality) on true
+    ) with ordinality as choice(value, ordinality)
 )
 
 select

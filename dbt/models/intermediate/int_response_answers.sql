@@ -38,7 +38,12 @@ select
     q.pii_risk,
     coalesce(jsonb_exists(r.shown_questions, q.stable_name), false) as was_shown,
     coalesce(jsonb_exists(r.payload, q.stable_name), false) as answered,
-    r.payload ->> q.stable_name as answer_value
+    -- Scalar text form: single-select option lookup and free-text value_text.
+    r.payload ->> q.stable_name as answer_value,
+    -- Raw jsonb form, type preserved: multi-select answers are arrays that
+    -- fact_response_item fans out (jsonb_array_elements_text). Carried here so
+    -- the warehouse parses the payload once (invariant 4).
+    r.payload -> q.stable_name as answer_json
 from responses as r
 inner join questions as q
     on r.survey_id = q.survey_id

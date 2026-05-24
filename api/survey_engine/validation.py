@@ -25,20 +25,28 @@ from typing import Any
 FREE_TEXT_TYPES = frozenset({"text", "comment"})
 
 # Single-select choice types: one scalar answer resolved to an option_key via
-# dim_option. These are the only choice types wired end-to-end today — dbt's
-# fact_response_item resolves a single answer_value against dim_option; multi-
-# select (array answers) needs fan-out that doesn't exist yet (M5).
+# dim_option (dbt's fact_response_item resolves a single answer_value against it).
 CHOICE_TYPES = frozenset({"radiogroup", "dropdown"})
+
+# Multi-select choice types: the answer is an *array* of chosen option values.
+# dbt's fact_response_item fans these out to one row per selection, each carrying
+# an option_key (M5.1). Validated identically to single-select choices (a
+# non-empty, duplicate-free `choices` list) — the difference is only downstream.
+MULTI_SELECT_TYPES = frozenset({"checkbox"})
+
+# Every option-bearing type shares the same `choices` lint.
+OPTION_TYPES = CHOICE_TYPES | MULTI_SELECT_TYPES
 
 # Question types we support end-to-end enough to publish. A name-bearing element
 # of any other type is rejected — you can't publish a type the runtime, gate and
 # dbt staging don't all handle (CLAUDE.md §"New question type = three places").
-# Deliberately narrow: fact_response_item only populates option_key (single
-# choice) and value_text (free-text); value_numeric/value_date are unpopulated,
-# so boolean/rating/numeric/date answers would land as all-null fact rows —
-# silently dropped and indistinguishable from "shown & skipped". Multi-select,
-# matrix, ranking, etc. each land here in M5 alongside their dbt staging + tests.
-KNOWN_QUESTION_TYPES = FREE_TEXT_TYPES | CHOICE_TYPES
+# Still narrow by design: fact_response_item populates option_key (single/multi
+# choice) and value_text (free-text); value_numeric/value_date stay unpopulated,
+# so rating/numeric/date answers would land as all-null fact rows — silently
+# dropped and indistinguishable from "shown & skipped". Those, plus matrix /
+# ranking / repeating groups, each rejoin here in a later M5 story alongside
+# their dbt staging + tests.
+KNOWN_QUESTION_TYPES = FREE_TEXT_TYPES | OPTION_TYPES
 
 # SurveyJS context variables that may appear as `{base...}` inside an expression
 # without being a question name (dynamic panels/matrix rows, self-reference). A
@@ -170,7 +178,7 @@ def _validate_questions(definition: dict[str, Any]) -> set[str]:
                 f"(supported: {', '.join(sorted(KNOWN_QUESTION_TYPES))})"
             )
 
-        if qtype in CHOICE_TYPES:
+        if qtype in OPTION_TYPES:
             _validate_choices(name, element.get("choices"))
     return names
 

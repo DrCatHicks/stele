@@ -70,9 +70,10 @@ def run_round_trip(definition: dict[str, Any]) -> None:
         raise RoundTripUnavailable("round-trip gate timed out") from exc
 
     if proc.returncode != 0:
-        raise RoundTripUnavailable(
-            f"round-trip oracle exited {proc.returncode}: {proc.stderr.strip()}"
-        )
+        # Cap stderr: it can be a long Node stack with absolute paths, and this
+        # message surfaces in the 503 response (operator-only, but keep it tidy).
+        detail = proc.stderr.strip()[:300]
+        raise RoundTripUnavailable(f"round-trip oracle exited {proc.returncode}: {detail}")
 
     try:
         verdict = json.loads(proc.stdout)

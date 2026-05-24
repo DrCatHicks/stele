@@ -139,6 +139,17 @@ async def test_definition_only_edit_preserves_sandbox_flag(
     assert calls == []  # still skipped after the edit
 
 
+async def test_clone_draft_version_inherits_flag(authed_client: AsyncClient) -> None:
+    # A cloned new draft version carries the sandbox flag forward, so the gate
+    # decision isn't silently reset across versions.
+    survey_id = await _create(authed_client, BRANCHING, for_real_respondents=False)
+    resp = await authed_client.post(f"/surveys/{survey_id}/drafts")  # clone=True default
+    assert resp.status_code == 201
+    new_version = resp.json()
+    assert new_version["version"] == 2
+    assert new_version["for_real_respondents"] is False
+
+
 # --- end-to-end (real Node + survey-core oracle) -----------------------------
 
 requires_node = pytest.mark.skipif(

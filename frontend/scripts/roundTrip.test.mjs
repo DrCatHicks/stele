@@ -93,7 +93,13 @@ describe('analyzeSurvey', () => {
     expect(verdict.unreachable).toEqual([]);
   });
 
-  const matrix = (name, rows, columns, extra = {}) => ({ type: 'matrix', name, rows, columns, ...extra });
+  const matrix = (name, rows, columns, extra = {}) => ({
+    type: 'matrix',
+    name,
+    rows,
+    columns,
+    ...extra,
+  });
 
   it('loads a matrix survey without errors', () => {
     const def = survey(matrix('sat', ['price', 'quality'], ['low', 'high']));

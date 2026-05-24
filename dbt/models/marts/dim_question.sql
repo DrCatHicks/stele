@@ -20,6 +20,11 @@ select
     -- shown_set_integrity resolves was_shown against (not the composite
     -- stable_name); null for a plain question. Deterministic per stable_name.
     min(matrix_name) as matrix_name,
+    -- Repeating-group decomposition (M5.4): for a paneldynamic cell sub-question,
+    -- the panel element's own name — the shown-set entry the integrity tests
+    -- resolve was_shown against (a cell is shown iff its panel is); null for a
+    -- plain or matrix question. Deterministic per stable_name.
+    min(panel_name) as panel_name,
     cast(null as text) as parent_question_id,
     cast(null as text) as parent_question_rationale
 from {{ ref('int_survey_questions') }}

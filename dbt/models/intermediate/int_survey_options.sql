@@ -14,6 +14,12 @@
 -- answer's. For 'matrix' the shared `columns` are each row's options; for
 -- 'matrixdropdown' each column's `choices` (falling back to the matrix-level
 -- shared `choices`) are that cell's options.
+--
+-- Paneldynamic options (M5.4) are scoped the same way: the option-typed template
+-- elements (radiogroup/dropdown) contribute one row per choice keyed by the
+-- "panel.element" sub-question name. A free-text panel cell has no `choices`, so
+-- the CROSS JOIN LATERAL yields zero rows for it (its answer is value_text, never
+-- an option_key) — exactly the choice-less drop the plain branch relies on.
 
 with elements as (
     select
@@ -44,7 +50,7 @@ plain_options as (
     cross join lateral jsonb_array_elements(
         case when jsonb_typeof(e.element -> 'choices') = 'array' then e.element -> 'choices' else '[]'::jsonb end
     ) with ordinality as choice(value, ordinality)
-    where e.question_type not in ('matrix', 'matrixdropdown')
+    where e.question_type not in ('matrix', 'matrixdropdown', 'paneldynamic')
 ),
 
 matrix_options as (
@@ -99,6 +105,37 @@ matrixdropdown_options as (
         end
     ) with ordinality as choice(value, ordinality)
     where e.question_type = 'matrixdropdown'
+),
+
+paneldynamic_options as (
+    -- Each option-typed template element's options, keyed by "panel.element".
+    -- Free-text cells (no `choices`) yield zero rows here.
+    select
+        e.survey_id,
+        e.survey_version,
+        {{ subquestion_name(['e.stable_name', "tmpl.value ->> 'name'"]) }} as stable_name,
+        case
+            when jsonb_typeof(choice.value) = 'object' then choice.value ->> 'value'
+            else choice.value #>> '{}'
+        end as value,
+        case
+            when jsonb_typeof(choice.value) = 'object'
+                then coalesce(choice.value ->> 'text', choice.value ->> 'value')
+            else choice.value #>> '{}'
+        end as label,
+        choice.ordinality::int as display_order
+    from elements as e
+    cross join lateral jsonb_array_elements(
+        case
+            when jsonb_typeof(e.element -> 'templateElements') = 'array'
+                then e.element -> 'templateElements'
+            else '[]'::jsonb
+        end
+    ) as tmpl(value)
+    cross join lateral jsonb_array_elements(
+        case when jsonb_typeof(tmpl.value -> 'choices') = 'array' then tmpl.value -> 'choices' else '[]'::jsonb end
+    ) with ordinality as choice(value, ordinality)
+    where e.question_type = 'paneldynamic'
 )
 
 select * from plain_options
@@ -106,3 +143,5 @@ union all
 select * from matrix_options
 union all
 select * from matrixdropdown_options
+union all
+select * from paneldynamic_options

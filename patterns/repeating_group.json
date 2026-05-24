@@ -1,0 +1,32 @@
+{
+  "title": "Repeating group (paneldynamic)",
+  "description": "paneldynamic — a repeating group: the respondent fills the same set of template elements once per item they add (a household member, a device, a prior address). The answer is an ARRAY of objects, one per occurrence, e.g. [{\"kind\": \"laptop\", \"nickname\": \"work\"}, {\"kind\": \"phone\", \"nickname\": \"personal\"}]. The warehouse decomposes a panel into one sub-question per template element (stable_name \"devices.kind\", \"devices.nickname\", …) and the array POSITION becomes the fact grain's occurrence — so the same person's two devices are two rows at occurrence 1 and 2, never conflated. A panel cell keeps its own type: a single-select cell (radiogroup/dropdown) resolves to an option_key; a free-text cell (text/comment) flows to value_text under its own pii_risk, copied to the PII store and screened per occurrence. Only those cell types are supported — the publish gate rejects multi-select / scalar / matrix / nested-panel cells so a panel answer can't be silently dropped.",
+  "pages": [
+    {
+      "name": "p1",
+      "elements": [
+        {
+          "type": "paneldynamic",
+          "name": "devices",
+          "title": "List the devices you use for work",
+          "description": "templateElements are the per-occurrence sub-questions. Occurrences are not fixed in the definition — the respondent adds as many as they need — so the warehouse derives occurrence from the answer array position, not from the definition.",
+          "templateElements": [
+            {
+              "type": "dropdown",
+              "name": "kind",
+              "title": "Device type",
+              "choices": ["phone", "tablet", "laptop", "desktop"]
+            },
+            {
+              "type": "comment",
+              "name": "nickname",
+              "title": "What do you call it? (free text)",
+              "pii_risk": "high",
+              "pii_risk_rationale": "a device nickname can name its owner; screened per occurrence"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

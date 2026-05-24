@@ -108,6 +108,10 @@ class FreeTextResponse(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     raw_response_id: Mapped[int] = mapped_column(BigInteger)
     question_name: Mapped[str] = mapped_column(Text)
+    # 1-based panel occurrence for a paneldynamic free-text cell (M5.4); 1 for a
+    # plain free-text question. Part of the (raw_response_id, question_name,
+    # occurrence) unique key so each repeated cell answer has its own row.
+    occurrence: Mapped[int] = mapped_column(Integer, server_default=text("1"))
     value_text: Mapped[str | None] = mapped_column(Text, default=None)
     pii_risk: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
@@ -118,10 +122,11 @@ class FreeTextResponse(Base):
 class FreeTextReviewDecision(Base):
     """Reviewer screening outcome for a high-PII-risk free-text answer (pii schema).
 
-    Keyed by the same (raw_response_id, question_name) grain as FreeTextResponse.
-    Holds only the decision — never the screened text — so dbt can read it to
-    gate value_text in the marts without gaining access to the PII store
-    (design doc §3.9 / §3.10, invariant 6). A "pending" answer has no row here.
+    Keyed by the same (raw_response_id, question_name, occurrence) grain as
+    FreeTextResponse. Holds only the decision — never the screened text — so dbt
+    can read it to gate value_text in the marts without gaining access to the PII
+    store (design doc §3.9 / §3.10, invariant 6). A "pending" answer has no row
+    here.
     """
 
     __tablename__ = "free_text_review_decisions"
@@ -130,6 +135,9 @@ class FreeTextReviewDecision(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     raw_response_id: Mapped[int] = mapped_column(BigInteger)
     question_name: Mapped[str] = mapped_column(Text)
+    # Matches the screened FreeTextResponse row's occurrence (M5.4) so a panel
+    # cell's repeated answers can be promoted/rejected independently.
+    occurrence: Mapped[int] = mapped_column(Integer, server_default=text("1"))
     status: Mapped[str] = mapped_column(Text)
     reviewed_by: Mapped[int | None] = mapped_column(Integer, default=None)
     reviewed_at: Mapped[datetime] = mapped_column(

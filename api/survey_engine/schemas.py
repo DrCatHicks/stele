@@ -95,6 +95,8 @@ class FreeTextReviewItemOut(BaseModel):
     survey_id: uuid.UUID
     survey_version: int
     question_name: str
+    # 1-based panel occurrence (paneldynamic cell); 1 for a plain free-text question.
+    occurrence: int
     value_text: str | None
     created_at: datetime
     status: str | None

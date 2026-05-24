@@ -13,18 +13,21 @@
 --   - a non-surfaced (high-risk, not promoted) free-text answer isn't redacted or
 --     leaked a value_text;
 --   - a non-free-text row carries value_text or is flagged redacted.
--- Passes when it returns zero rows. (Join is on respondent+version+question; the
--- per-response promotion is resolved via raw_response_id under the one-submission
--- -per-respondent-version assumption — multi-submission is open follow-up.)
+-- Passes when it returns zero rows. (Join is on respondent+version+question+
+-- occurrence; the per-response promotion is resolved via raw_response_id +
+-- occurrence under the one-submission-per-respondent-version assumption —
+-- multi-submission is open follow-up. occurrence distinguishes a panel cell's
+-- repeated answers, M5.4.)
 
 with decisions as (
-    select raw_response_id, question_name, status
+    select raw_response_id, question_name, occurrence, status
     from {{ source('pii', 'free_text_review_decisions') }}
 ),
 
 answers as (
     select
         a.respondent_id,
+        a.occurrence,
         {{ surrogate_key(['a.survey_id', 'a.survey_version']) }} as survey_version_id,
         {{ surrogate_key(['a.stable_name']) }} as question_id,
         a.question_type,
@@ -36,6 +39,7 @@ answers as (
     left join decisions as d
         on a.raw_response_id = d.raw_response_id
         and a.stable_name = d.question_name
+        and a.occurrence = d.occurrence
 ),
 
 joined as (
@@ -54,6 +58,7 @@ joined as (
         on fri.respondent_id = a.respondent_id
         and fri.survey_version_id = a.survey_version_id
         and fri.question_id = a.question_id
+        and fri.occurrence = a.occurrence
 )
 
 select fact_id

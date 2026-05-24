@@ -49,11 +49,11 @@ def test_unsupported_question_type_rejected() -> None:
 
 
 def test_not_yet_wired_types_rejected() -> None:
-    # Matrix, boolean, rating land in later M5 stories with their dbt staging;
-    # publishing one today would silently drop the answer in the warehouse.
-    # (checkbox and ranking are now wired — see test_multi_select_passes /
-    # test_ranked_passes.)
-    for qtype in ("matrix", "boolean", "rating"):
+    # boolean, rating land in a later M5 story with their dbt staging; publishing
+    # one today would silently drop the answer in the warehouse. (checkbox,
+    # ranking, matrix and matrixdropdown are now wired — see the type-specific
+    # tests below.)
+    for qtype in ("boolean", "rating"):
         with pytest.raises(InvalidDefinition, match="unsupported type"):
             validate_definition(_def({"type": qtype, "name": "q1", "choices": ["a", "b"]}))
 
@@ -90,6 +90,168 @@ def test_ranked_duplicate_option_value_rejected() -> None:
 def test_ranked_without_choices_rejected() -> None:
     with pytest.raises(InvalidDefinition, match="non-empty 'choices'"):
         validate_definition(_def({"type": "ranking", "name": "q1"}))
+
+
+# --- matrix (M5.3) -----------------------------------------------------------
+
+
+def _matrix(name: str = "m1", **extra: Any) -> dict[str, Any]:
+    # A single-choice matrix: each row chooses one of the shared columns.
+    return {
+        "type": "matrix",
+        "name": name,
+        "rows": [{"value": "r1", "text": "Row 1"}, {"value": "r2", "text": "Row 2"}],
+        "columns": [{"value": "c1", "text": "Col 1"}, {"value": "c2", "text": "Col 2"}],
+        **extra,
+    }
+
+
+def _matrixdropdown(name: str = "md1", **extra: Any) -> dict[str, Any]:
+    return {
+        "type": "matrixdropdown",
+        "name": name,
+        "rows": [{"value": "r1", "text": "Row 1"}],
+        "columns": [
+            {"name": "brand", "cellType": "dropdown", "choices": ["apple", "dell"]},
+            {"name": "os", "cellType": "radiogroup", "choices": ["mac", "win"]},
+        ],
+        **extra,
+    }
+
+
+def test_matrix_passes() -> None:
+    # matrix is wired end-to-end (M5.3): each row is a single-select sub-question
+    # over the shared columns; the chosen column resolves to an option_key.
+    validate_definition(_def(_matrix()))
+
+
+def test_matrix_scalar_rows_and_columns_pass() -> None:
+    # Rows/columns accept bare scalars too, like single-select choices.
+    validate_definition(_def({"type": "matrix", "name": "m1", "rows": ["r1"], "columns": ["c1"]}))
+
+
+def test_matrix_without_rows_rejected() -> None:
+    with pytest.raises(InvalidDefinition, match="non-empty 'rows'"):
+        validate_definition(_def({"type": "matrix", "name": "m1", "columns": ["c1"]}))
+
+
+def test_matrix_missing_row_identifier_rejected() -> None:
+    # FR-2 "missing matrix row identifiers": a row becomes a sub-question identity.
+    rows = [{"text": "No id here"}]
+    with pytest.raises(InvalidDefinition, match="row is missing an identifier"):
+        validate_definition(_def({"type": "matrix", "name": "m1", "rows": rows, "columns": ["c1"]}))
+
+
+def test_matrix_duplicate_row_rejected() -> None:
+    with pytest.raises(InvalidDefinition, match="duplicate matrix row"):
+        validate_definition(
+            _def({"type": "matrix", "name": "m1", "rows": ["r1", "r1"], "columns": ["c1"]})
+        )
+
+
+def test_matrix_without_columns_rejected() -> None:
+    with pytest.raises(InvalidDefinition, match="non-empty 'columns'"):
+        validate_definition(_def({"type": "matrix", "name": "m1", "rows": ["r1"]}))
+
+
+def test_matrix_duplicate_column_rejected() -> None:
+    with pytest.raises(InvalidDefinition, match="duplicate matrix column"):
+        validate_definition(
+            _def({"type": "matrix", "name": "m1", "rows": ["r1"], "columns": ["c1", "c1"]})
+        )
+
+
+def test_matrixdropdown_passes() -> None:
+    # Option-based cells (dropdown / radiogroup) resolve to an option_key per cell.
+    validate_definition(_def(_matrixdropdown()))
+
+
+def test_matrixdropdown_shared_choices_pass() -> None:
+    # A column without its own `choices` inherits the matrix-level shared choices.
+    definition = _def(
+        {
+            "type": "matrixdropdown",
+            "name": "md1",
+            "rows": ["r1"],
+            "choices": ["x", "y"],
+            "columns": [{"name": "c1", "cellType": "dropdown"}],
+        }
+    )
+    validate_definition(definition)
+
+
+def test_matrixdropdown_missing_column_name_rejected() -> None:
+    definition = _def(
+        {"type": "matrixdropdown", "name": "md1", "rows": ["r1"], "columns": [{"choices": ["a"]}]}
+    )
+    with pytest.raises(InvalidDefinition, match="column needs a 'name'"):
+        validate_definition(definition)
+
+
+def test_matrixdropdown_duplicate_column_name_rejected() -> None:
+    definition = _def(
+        {
+            "type": "matrixdropdown",
+            "name": "md1",
+            "rows": ["r1"],
+            "columns": [
+                {"name": "c1", "choices": ["a"]},
+                {"name": "c1", "choices": ["b"]},
+            ],
+        }
+    )
+    with pytest.raises(InvalidDefinition, match="duplicate matrixdropdown column"):
+        validate_definition(definition)
+
+
+def test_matrixdropdown_unsupported_celltype_rejected() -> None:
+    # Free-text/scalar cells need value_text/PII or numeric storage — deferred.
+    definition = _def(
+        {
+            "type": "matrixdropdown",
+            "name": "md1",
+            "rows": ["r1"],
+            "columns": [{"name": "note", "cellType": "comment"}],
+        }
+    )
+    with pytest.raises(InvalidDefinition, match="cellType 'comment' is not supported"):
+        validate_definition(definition)
+
+
+def test_matrixdropdown_column_without_choices_rejected() -> None:
+    definition = _def(
+        {
+            "type": "matrixdropdown",
+            "name": "md1",
+            "rows": ["r1"],
+            "columns": [{"name": "c1", "cellType": "dropdown"}],
+        }
+    )
+    with pytest.raises(InvalidDefinition, match="non-empty 'choices'"):
+        validate_definition(definition)
+
+
+def test_matrixdropdown_duplicate_choice_value_rejected() -> None:
+    definition = _def(
+        {
+            "type": "matrixdropdown",
+            "name": "md1",
+            "rows": ["r1"],
+            "columns": [{"name": "c1", "cellType": "dropdown", "choices": ["a", "a"]}],
+        }
+    )
+    with pytest.raises(InvalidDefinition, match="duplicate option value"):
+        validate_definition(definition)
+
+
+async def test_matrix_missing_row_id_publishes_422(authed_client: AsyncClient) -> None:
+    # The row-id lint reaches the editor as the 422 detail (FR-2).
+    rows = [{"text": "No id"}]
+    definition = _def({"type": "matrix", "name": "m1", "rows": rows, "columns": ["c1"]})
+    survey_id = await _create_draft(authed_client, definition)
+    response = await authed_client.post(f"/surveys/{survey_id}/versions/1/publish")
+    assert response.status_code == 422
+    assert "row is missing an identifier" in response.json()["detail"]
 
 
 def test_nameless_display_element_ignored() -> None:

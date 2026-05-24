@@ -25,7 +25,9 @@ fact_routed_past as (
         fri.fact_id,
         fri.respondent_id,
         fri.survey_version_id,
-        dq.stable_name
+        -- Resolve a matrix cell sub-question against its matrix's name (the
+        -- shown-set entry); a plain question uses its own stable_name (M5.3).
+        coalesce(dq.matrix_name, dq.stable_name) as shown_name
     from {{ ref('fact_response_item') }} as fri
     inner join {{ ref('dim_question') }} as dq
         on fri.question_id = dq.question_id
@@ -37,4 +39,4 @@ from fact_routed_past as frp
 inner join raw_shown as rs
     on frp.respondent_id = rs.respondent_id
     and frp.survey_version_id = rs.survey_version_id
-    and frp.stable_name = rs.stable_name
+    and frp.shown_name = rs.stable_name

@@ -1,0 +1,26 @@
+{
+  "title": "Matrix (single-choice grid)",
+  "description": "matrix — a grid where each row is a single-choice question over a shared set of columns. The answer is an object keyed by row value, e.g. {\"price\": \"agree\", \"quality\": \"neutral\"}. The warehouse decomposes a matrix into one sub-question per row (stable_name \"satisfaction.price\", \"satisfaction.quality\", …); the chosen column resolves to that sub-question's option_key, so a matrix lands in the star schema exactly like a set of single-selects. Rows and columns must carry unique identifiers — the publish gate rejects a missing or duplicate row id (a row id becomes part of a sub-question's identity).",
+  "pages": [
+    {
+      "name": "p1",
+      "elements": [
+        {
+          "type": "matrix",
+          "name": "satisfaction",
+          "title": "How much do you agree?",
+          "description": "Rows are the sub-questions; the shared columns are the options each row chooses from. A scalar column (\"agree\") and an object column ({\"value\": \"na\", \"text\": \"N/A\"}) are both fine — same normalization as single-select choices.",
+          "rows": [
+            { "value": "price", "text": "The price is fair" },
+            { "value": "quality", "text": "The quality is high" }
+          ],
+          "columns": [
+            { "value": "disagree", "text": "Disagree" },
+            { "value": "neutral", "text": "Neutral" },
+            { "value": "agree", "text": "Agree" }
+          ]
+        }
+      ]
+    }
+  ]
+}

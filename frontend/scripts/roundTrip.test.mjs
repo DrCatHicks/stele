@@ -93,6 +93,38 @@ describe('analyzeSurvey', () => {
     expect(verdict.unreachable).toEqual([]);
   });
 
+  const matrix = (name, rows, columns, extra = {}) => ({ type: 'matrix', name, rows, columns, ...extra });
+
+  it('loads a matrix survey without errors', () => {
+    const def = survey(matrix('sat', ['price', 'quality'], ['low', 'high']));
+    const verdict = analyzeSurvey(def);
+    expect(verdict.ok).toBe(true);
+  });
+
+  it('loads a matrixdropdown survey without errors', () => {
+    const def = survey({
+      type: 'matrixdropdown',
+      name: 'devices',
+      rows: ['laptop', 'phone'],
+      columns: [{ name: 'brand', cellType: 'dropdown', choices: ['apple', 'dell'] }],
+    });
+    const verdict = analyzeSurvey(def);
+    expect(verdict.ok).toBe(true);
+  });
+
+  it('does not flag unreachable when the driver is a matrix question', () => {
+    // A matrix answer is a nested object ({row: col}), not a scalar; a sub-question
+    // reference like {sat.price} resolves to base `sat` (the matrix), which is not
+    // enumerated — so a matrix-gated question is never false-rejected.
+    const def = survey(
+      matrix('sat', ['price'], ['low', 'high']),
+      radio('followup', ['x', 'y'], { visibleIf: "{sat.price} = 'nope'" }),
+    );
+    const verdict = analyzeSurvey(def);
+    expect(verdict.ok).toBe(true);
+    expect(verdict.unreachable).toEqual([]);
+  });
+
   it('returns a structured verdict on degenerate input without throwing', () => {
     // survey-core tolerates a null/empty definition (yields an empty model);
     // the M4.1 schema gate is what rejects empty surveys. The oracle must still

@@ -11,6 +11,11 @@ from pydantic import BaseModel, ConfigDict
 
 class SurveyDraftCreate(BaseModel):
     definition_json: dict[str, Any]
+    # Whether publishing runs the headless round-trip gate (design doc §3.6).
+    # Omitted (None): on create defaults to True (gate by default); on edit
+    # preserves the draft's current value, so a UI that PUTs only the definition
+    # never silently flips a sandbox survey back to gated.
+    for_real_respondents: bool | None = None
 
 
 class SurveyDefinitionOut(BaseModel):
@@ -20,6 +25,7 @@ class SurveyDefinitionOut(BaseModel):
     version: int
     status: str
     definition_hash: str | None
+    for_real_respondents: bool
     published_at: datetime | None
     created_at: datetime
 

@@ -32,7 +32,7 @@ async def list_surveys(session: SessionDep) -> list[SurveyDefinitionOut]:
 
 @router.post("", status_code=201, response_model=SurveyDefinitionOut, dependencies=[_author_only])
 async def create_survey(body: SurveyDraftCreate, session: SessionDep) -> SurveyDefinitionOut:
-    survey = await service.create_draft(session, body.definition_json)
+    survey = await service.create_draft(session, body.definition_json, body.for_real_respondents)
     return SurveyDefinitionOut.model_validate(survey)
 
 
@@ -61,7 +61,9 @@ async def edit_survey(
     survey_id: uuid.UUID, version: int, body: SurveyDraftCreate, session: SessionDep
 ) -> SurveyDefinitionOut:
     try:
-        survey = await service.edit_draft(session, survey_id, version, body.definition_json)
+        survey = await service.edit_draft(
+            session, survey_id, version, body.definition_json, body.for_real_respondents
+        )
     except service.SurveyNotFound:
         raise HTTPException(status_code=404, detail="survey version not found") from None
     except service.SurveyConflict as exc:
@@ -85,6 +87,12 @@ async def publish_survey(
         raise HTTPException(status_code=409, detail=str(exc)) from None
     except service.InvalidDefinition as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
+    except service.RoundTripUnavailable as exc:
+        # The definition is fine; the round-trip oracle itself couldn't run. Fail
+        # closed for a flagged survey (503) rather than publish without the gate.
+        raise HTTPException(
+            status_code=503, detail=f"round-trip validation unavailable: {exc}"
+        ) from None
     return SurveyDefinitionOut.model_validate(survey)
 
 

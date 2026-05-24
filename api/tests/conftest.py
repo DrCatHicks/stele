@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator
 
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -26,6 +27,18 @@ TEST_DATABASE_URL = os.environ.get(
     "STELE_DATABASE_URL",
     "postgresql+psycopg://stele_dev:dev@localhost:5432/stele",
 )
+
+
+@pytest.fixture(autouse=True)
+def _stub_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Publishing a survey flagged for real respondents runs the round-trip
+    oracle (Node + survey-core) by default. Stub it to a no-op so the suite
+    doesn't depend on a Node toolchain; the wiring tests override this with
+    their own behaviour, and the real-oracle e2e tests restore it explicitly
+    (and skip when Node/survey-core is unavailable)."""
+    from api.survey_engine import round_trip
+
+    monkeypatch.setattr(round_trip, "run_round_trip", lambda *args, **kwargs: None)
 
 
 @pytest_asyncio.fixture

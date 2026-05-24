@@ -21,60 +21,25 @@
 -- invariant-6 lint binds the guard to this statement. occurrence is fixed at 1
 -- until repeating groups land (a later M5 story).
 
-with answers as (
+-- The multi-select fan-out and all answer-side JSON parsing live in
+-- int_response_selections (keeping this marts model portable — JSON confinement
+-- per stg_raw_responses / CLAUDE.md). One row per chosen option for a checkbox,
+-- one row otherwise, one routing row for an unanswered question.
+with selections as (
     select
-        a.raw_response_id,
-        a.stable_name,
-        a.respondent_id,
-        a.answer_value,
-        a.answer_json,
-        a.answered,
-        a.was_shown,
-        a.question_type,
-        a.pii_risk,
-        {{ surrogate_key(['a.survey_id', 'a.survey_version']) }} as survey_version_id,
-        {{ surrogate_key(['a.stable_name']) }} as question_id,
-        {{ surrogate_key(['a.survey_id', 'a.survey_version', 'a.stable_name']) }} as question_version_id
-    from {{ ref('int_response_answers') }} as a
-),
-
--- Expand each answer to its selection grain. A multi-select answer fans out to
--- one row per chosen option (jsonb_array_elements_text over the answer array);
--- every other type and every unanswered question stays a single row. LEFT JOIN
--- LATERAL on the (possibly empty) array guarantees that single row even when the
--- lateral yields nothing — a non-checkbox question, an unanswered checkbox, or a
--- checkbox answered with an empty array — so the routing row (shown-skipped /
--- routed-past) is never lost. option_lookup_value is the value joined to
--- dim_option: the per-selection value for checkbox, the scalar answer otherwise.
--- Assumes a well-formed checkbox array carries distinct values (SurveyJS
--- guarantees it; raw_responses is append-only from the API) — a duplicated value
--- would fan out to two rows sharing an option_key and collide on fact_id.
-selections as (
-    select
-        a.raw_response_id,
-        a.stable_name,
-        a.respondent_id,
-        a.answer_value,
-        a.was_shown,
-        a.question_type,
-        a.pii_risk,
-        a.survey_version_id,
-        a.question_id,
-        a.question_version_id,
-        case
-            when a.question_type = 'checkbox' then sel.value
-            else a.answer_value
-        end as option_lookup_value
-    from answers as a
-    left join lateral jsonb_array_elements_text(
-        case
-            when a.question_type = 'checkbox'
-                and a.answered
-                and jsonb_typeof(a.answer_json) = 'array'
-                then a.answer_json
-            else '[]'::jsonb
-        end
-    ) as sel(value) on true
+        s.raw_response_id,
+        s.stable_name,
+        s.respondent_id,
+        s.answer_value,
+        s.was_shown,
+        s.question_type,
+        s.pii_risk,
+        s.option_lookup_value,
+        s.selection_ordinal,
+        {{ surrogate_key(['s.survey_id', 's.survey_version']) }} as survey_version_id,
+        {{ surrogate_key(['s.stable_name']) }} as question_id,
+        {{ surrogate_key(['s.survey_id', 's.survey_version', 's.stable_name']) }} as question_version_id
+    from {{ ref('int_response_selections') }} as s
 ),
 
 -- Reviewer promote/reject decisions, per response+question. 'promoted' lets a
@@ -94,10 +59,18 @@ review_decisions as (
 fact_response_item_rows as (
     select
         -- option_key is part of the grain, so each fanned-out multi-select
-        -- selection gets a distinct fact_id; an unanswered row keys on '' once.
+        -- selection that resolves gets a distinct fact_id; an unanswered row keys
+        -- on '' once. A multi-select selection that does NOT resolve to an option
+        -- (e.g. an unexpected value from the public submit endpoint) has a null
+        -- option_key, so two such selections would otherwise share a key — the
+        -- selection_ordinal disambiguates them, keeping fact_id unique by
+        -- construction while the row-count parity test still flags the unresolved
+        -- value. (A duplicated *resolving* value — which SurveyJS never produces —
+        -- would still collide; raw_responses is append-only from the API.)
         {{ surrogate_key([
-            's.respondent_id', 's.survey_version_id', 's.question_id',
-            '1', "coalesce(o.option_key, '')"
+            's.respondent_id', 's.survey_version_id', 's.question_id', '1',
+            "coalesce(o.option_key, case when s.selection_ordinal is not null "
+            "then 'unresolved:' || s.selection_ordinal::text else '' end)"
         ]) }} as fact_id,
         s.respondent_id,
         s.survey_version_id,

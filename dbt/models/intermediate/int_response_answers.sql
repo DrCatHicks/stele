@@ -41,7 +41,7 @@ select
     -- Scalar text form: single-select option lookup and free-text value_text.
     r.payload ->> q.stable_name as answer_value,
     -- Raw jsonb form, type preserved: multi-select answers are arrays that
-    -- fact_response_item fans out (jsonb_array_elements_text). Carried here so
+    -- int_response_selections fans out (jsonb_array_elements_text). Carried here so
     -- the warehouse parses the payload once (invariant 4).
     r.payload -> q.stable_name as answer_json
 from responses as r

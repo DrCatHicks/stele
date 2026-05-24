@@ -244,6 +244,36 @@ def test_matrixdropdown_duplicate_choice_value_rejected() -> None:
         validate_definition(definition)
 
 
+async def test_matrix_alongside_plain_questions_pass() -> None:
+    # A matrix and plainly-named questions coexist fine when names don't clash.
+    validate_definition(_def(_radio("q1"), _matrix("m1"), {"type": "text", "name": "note"}))
+
+
+# The collision is rejected whichever order the elements appear; the message just
+# differs by which one is seen second — a plain name landing on an existing matrix
+# sub-name hits the generic duplicate-name check, the reverse hits the matrix guard.
+_NAME_CLASH = "duplicate question name|collides with another question name"
+
+
+def test_matrix_subquestion_name_collides_with_plain_question_rejected() -> None:
+    # _matrix("m1") has rows r1/r2 → sub-question "m1.r1"; a plain question named
+    # "m1.r1" would hash to the same question_id. Caught at publish, not dbt build.
+    with pytest.raises(InvalidDefinition, match=_NAME_CLASH):
+        validate_definition(_def(_matrix("m1"), {"type": "text", "name": "m1.r1"}))
+
+
+def test_matrix_subquestion_collision_order_independent() -> None:
+    # Matrix seen second → its sub-name lands on the existing plain name.
+    with pytest.raises(InvalidDefinition, match="collides with another question name"):
+        validate_definition(_def({"type": "text", "name": "m1.r1"}, _matrix("m1")))
+
+
+def test_matrixdropdown_subquestion_name_collision_rejected() -> None:
+    # _matrixdropdown("md1") → cell "md1.r1.brand"; a plain question of that name clashes.
+    with pytest.raises(InvalidDefinition, match=_NAME_CLASH):
+        validate_definition(_def(_matrixdropdown("md1"), {"type": "text", "name": "md1.r1.brand"}))
+
+
 async def test_matrix_missing_row_id_publishes_422(authed_client: AsyncClient) -> None:
     # The row-id lint reaches the editor as the 422 detail (FR-2).
     rows = [{"text": "No id"}]

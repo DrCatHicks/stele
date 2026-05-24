@@ -206,7 +206,19 @@ def _validate_questions(definition: dict[str, Any]) -> set[str]:
         if qtype in OPTION_TYPES:
             _validate_choices(name, element.get("choices"))
         elif qtype in MATRIX_TYPES:
-            _validate_matrix(name, element)
+            # A matrix expands to one sub-question per cell, each with a composite
+            # stable_name ("matrix.row[.column]"). Those names share the warehouse
+            # question namespace, so guard the collision here — e.g. a matrix 'm'
+            # row 'r' and a plain question literally named 'm.r' would otherwise
+            # both hash to one question_id and only surface as a dim uniqueness
+            # failure at dbt build. Caught at publish as a clear 422 instead.
+            for sub_name in _validate_matrix(name, element):
+                if sub_name in names:
+                    raise InvalidDefinition(
+                        f"question {name!r}: matrix sub-question {sub_name!r} collides with "
+                        "another question name"
+                    )
+                names.add(sub_name)
     return names
 
 
@@ -246,12 +258,15 @@ def _matrix_rows(name: str, element: dict[str, Any]) -> list[str]:
     return values
 
 
-def _validate_matrix(name: str, element: dict[str, Any]) -> None:
-    """Lint a matrix / matrixdropdown: row ids, column ids, and (for
-    matrixdropdown) per-column cell type + choices. Each cell resolves to an
-    option_key downstream, so the column choices get the same uniqueness lint as
-    a single-select's `choices`."""
-    _matrix_rows(name, element)
+def _validate_matrix(name: str, element: dict[str, Any]) -> list[str]:
+    """Lint a matrix / matrixdropdown and return its cell sub-question stable_names.
+
+    Checks row ids, column ids, and (for matrixdropdown) per-column cell type +
+    choices. Each cell resolves to an option_key downstream, so the column choices
+    get the same uniqueness lint as a single-select's `choices`. The returned
+    composite names ("matrix.row[.column]") mirror dbt's subquestion_name macro and
+    feed the caller's question-name collision guard."""
+    rows = _matrix_rows(name, element)
     columns = element.get("columns")
     if not isinstance(columns, list) or not columns:
         raise InvalidDefinition(f"question {name!r}: matrix requires a non-empty 'columns'")
@@ -266,10 +281,10 @@ def _validate_matrix(name: str, element: dict[str, Any]) -> None:
             if value in seen:
                 raise InvalidDefinition(f"question {name!r}: duplicate matrix column {value!r}")
             seen.add(value)
-        return
+        return [f"{name}.{row}" for row in rows]
 
     # matrixdropdown: each column is a typed sub-question keyed by its `name`.
-    seen_names: set[str] = set()
+    seen_names: list[str] = []
     shared_choices = element.get("choices")
     default_cell = element.get("cellType", "dropdown")
     for column in columns:
@@ -282,7 +297,7 @@ def _validate_matrix(name: str, element: dict[str, Any]) -> None:
             raise InvalidDefinition(
                 f"question {name!r}: duplicate matrixdropdown column {col_name!r}"
             )
-        seen_names.add(col_name)
+        seen_names.append(col_name)
         cell_type = column.get("cellType", default_cell)
         if cell_type not in MATRIX_CELL_TYPES:
             raise InvalidDefinition(
@@ -291,6 +306,7 @@ def _validate_matrix(name: str, element: dict[str, Any]) -> None:
             )
         # A column's choices fall back to the matrix-level shared `choices`.
         _validate_choices(f"{name}.{col_name}", column.get("choices", shared_choices))
+    return [f"{name}.{row}.{col}" for row in rows for col in seen_names]
 
 
 def _calculated_value_names(definition: dict[str, Any]) -> set[str]:

@@ -1,0 +1,29 @@
+{
+  "title": "Single-select questions",
+  "description": "radiogroup and dropdown — the two closed-ended types wired end-to-end today. One scalar answer per question, resolved to an option_key in dim_option.",
+  "pages": [
+    {
+      "name": "p1",
+      "elements": [
+        {
+          "type": "radiogroup",
+          "name": "employment_status",
+          "title": "What is your current employment status?",
+          "choices": ["employed", "self_employed", "unemployed", "retired", "student"]
+        },
+        {
+          "type": "dropdown",
+          "name": "region",
+          "title": "Which region do you live in?",
+          "description": "Object choices carry a stable machine `value` plus a human `text`. dim_option keys on `value`, so the text can be reworded without changing the warehouse key.",
+          "choices": [
+            { "value": "na", "text": "North America" },
+            { "value": "eu", "text": "Europe" },
+            { "value": "apac", "text": "Asia-Pacific" },
+            { "value": "other", "text": "Somewhere else" }
+          ]
+        }
+      ]
+    }
+  ]
+}

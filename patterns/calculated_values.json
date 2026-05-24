@@ -1,0 +1,34 @@
+{
+  "title": "Derived visibility with calculatedValues",
+  "description": "A calculatedValue is a named expression over other answers. It is a legal visibleIf target — useful when the same condition gates several questions, or the condition is more complex than a single comparison. calculatedValues count as 'defined' for the dangling-reference lint; they are not questions and never reach the warehouse.",
+  "calculatedValues": [
+    {
+      "name": "wants_contact",
+      "expression": "{contact_pref} = 'email' or {contact_pref} = 'phone'"
+    }
+  ],
+  "pages": [
+    {
+      "name": "p1",
+      "elements": [
+        {
+          "type": "radiogroup",
+          "name": "contact_pref",
+          "title": "How would you prefer we follow up?",
+          "choices": [
+            { "value": "email", "text": "By email" },
+            { "value": "phone", "text": "By phone" },
+            { "value": "none", "text": "Please don't contact me" }
+          ]
+        },
+        {
+          "type": "text",
+          "name": "contact_detail",
+          "title": "Best address or number to reach you?",
+          "description": "Reachable whenever wants_contact is true (email or phone). Gating on the derived value avoids repeating the two-way condition. Contact details are identifying — left at the default pii_risk 'high'.",
+          "visibleIf": "{wants_contact} = true"
+        }
+      ]
+    }
+  ]
+}

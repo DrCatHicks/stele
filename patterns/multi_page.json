@@ -1,0 +1,42 @@
+{
+  "title": "Multi-page survey with cross-page branching",
+  "description": "Questions split across pages. visibleIf can reference an answer from an earlier page, so a whole page's question can be gated on a prior response. Page boundaries are presentation only — the warehouse flattens elements across pages (dbt walks pages[].elements[]).",
+  "pages": [
+    {
+      "name": "screening",
+      "title": "A few quick questions",
+      "elements": [
+        {
+          "type": "radiogroup",
+          "name": "has_pets",
+          "title": "Do you have any pets?",
+          "choices": [
+            { "value": "yes", "text": "Yes" },
+            { "value": "no", "text": "No" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "pet_details",
+      "title": "About your pets",
+      "elements": [
+        {
+          "type": "dropdown",
+          "name": "pet_count",
+          "title": "How many pets do you have?",
+          "description": "Reachable only when has_pets = 'yes', answered on the previous page.",
+          "visibleIf": "{has_pets} = 'yes'",
+          "choices": ["1", "2", "3", "4_or_more"]
+        },
+        {
+          "type": "comment",
+          "name": "pet_names",
+          "title": "Tell us about them.",
+          "description": "Free text about pets can reveal household details; left at the default pii_risk 'high'.",
+          "visibleIf": "{has_pets} = 'yes'"
+        }
+      ]
+    }
+  ]
+}

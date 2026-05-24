@@ -1,0 +1,29 @@
+{
+  "title": "Multi-select questions",
+  "description": "checkbox — the multi-select type. The answer is an array of chosen option values; fact_response_item fans it out to one row per selection, each carrying its own option_key. Count selections at this grain, never conflating them with respondent counts (fact_response keeps the respondent-question grain separate).",
+  "pages": [
+    {
+      "name": "p1",
+      "elements": [
+        {
+          "type": "checkbox",
+          "name": "languages",
+          "title": "Which languages do you use regularly?",
+          "description": "Validated exactly like a single-select: a non-empty, duplicate-free `choices` list. The difference is only downstream — an array answer like [\"python\", \"sql\"] becomes two fact rows, one per option_key.",
+          "choices": ["python", "sql", "typescript", "rust", "go"]
+        },
+        {
+          "type": "checkbox",
+          "name": "tools",
+          "title": "Which of these do you use?",
+          "description": "Object choices carry a stable machine `value` plus a human `text`, just like single-select; dim_option keys on `value`.",
+          "choices": [
+            { "value": "dbt", "text": "dbt" },
+            { "value": "airflow", "text": "Apache Airflow" },
+            { "value": "none", "text": "None of these" }
+          ]
+        }
+      ]
+    }
+  ]
+}

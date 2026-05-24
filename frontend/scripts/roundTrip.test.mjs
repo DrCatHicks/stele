@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { analyzeSurvey } from './roundTrip.mjs';
 
 const radio = (name, choices, extra = {}) => ({ type: 'radiogroup', name, choices, ...extra });
+const checkbox = (name, choices, extra = {}) => ({ type: 'checkbox', name, choices, ...extra });
 const survey = (...elements) => ({ pages: [{ name: 'p1', elements }] });
 
 describe('analyzeSurvey', () => {
@@ -49,6 +50,25 @@ describe('analyzeSurvey', () => {
         },
       ],
     };
+    const verdict = analyzeSurvey(def);
+    expect(verdict.ok).toBe(true);
+    expect(verdict.unreachable).toEqual([]);
+  });
+
+  it('loads a multi-select (checkbox) survey without errors', () => {
+    const verdict = analyzeSurvey(survey(checkbox('langs', ['py', 'sql', 'ts'])));
+    expect(verdict.ok).toBe(true);
+  });
+
+  it('does not flag unreachable when the driver is a multi-select question', () => {
+    // A checkbox's branch space is the option power set (exponential) and its
+    // answer is an array, so the oracle does not enumerate it — a checkbox-gated
+    // question must not be false-rejected even when its visibleIf is unsatisfiable
+    // under scalar enumeration. Only load/expression errors are caught here.
+    const def = survey(
+      checkbox('langs', ['py', 'sql']),
+      radio('followup', ['x', 'y'], { visibleIf: "{langs} contains 'rust'" }),
+    );
     const verdict = analyzeSurvey(def);
     expect(verdict.ok).toBe(true);
     expect(verdict.unreachable).toEqual([]);

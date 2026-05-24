@@ -24,25 +24,21 @@ from typing import Any
 # by pii_risk (design doc §3.9). Other types resolve via options / numeric / date.
 FREE_TEXT_TYPES = frozenset({"text", "comment"})
 
-# Choice-based types carry a `choices` array. Mirrors int_survey_options, which
-# unnests `choices` for exactly these (closed-ended) questions.
-CHOICE_TYPES = frozenset({"radiogroup", "dropdown", "checkbox", "tagbox", "ranking", "imagepicker"})
-
-# Matrix question with fixed `rows`. Only the simple single-select matrix is
-# row-id-checked here; matrixdropdown/matrixdynamic carry optional/dynamic rows
-# and are out of scope until they're wired end-to-end (M5).
-MATRIX_ROW_TYPES = frozenset({"matrix"})
+# Single-select choice types: one scalar answer resolved to an option_key via
+# dim_option. These are the only choice types wired end-to-end today — dbt's
+# fact_response_item resolves a single answer_value against dim_option; multi-
+# select (array answers) needs fan-out that doesn't exist yet (M5).
+CHOICE_TYPES = frozenset({"radiogroup", "dropdown"})
 
 # Question types we support end-to-end enough to publish. A name-bearing element
 # of any other type is rejected — you can't publish a type the runtime, gate and
 # dbt staging don't all handle (CLAUDE.md §"New question type = three places").
-# M5 extends this set as each new type lands in all three.
-KNOWN_QUESTION_TYPES = (
-    FREE_TEXT_TYPES
-    | CHOICE_TYPES
-    | MATRIX_ROW_TYPES
-    | frozenset({"boolean", "rating", "matrixdropdown", "matrixdynamic"})
-)
+# Deliberately narrow: fact_response_item only populates option_key (single
+# choice) and value_text (free-text); value_numeric/value_date are unpopulated,
+# so boolean/rating/numeric/date answers would land as all-null fact rows —
+# silently dropped and indistinguishable from "shown & skipped". Multi-select,
+# matrix, ranking, etc. each land here in M5 alongside their dbt staging + tests.
+KNOWN_QUESTION_TYPES = FREE_TEXT_TYPES | CHOICE_TYPES
 
 # SurveyJS context variables that may appear as `{base...}` inside an expression
 # without being a question name (dynamic panels/matrix rows, self-reference). A
@@ -73,9 +69,11 @@ class FreeTextQuestion:
 
 
 def _iter_elements(definition: dict[str, Any]) -> Iterator[dict[str, Any]]:
-    # Both SurveyJS shapes: pages[].elements[] and top-level elements[]. Mirrors
-    # the unnest in dbt's int_survey_elements so API and warehouse agree on what
-    # counts as a question.
+    # The two SurveyJS shapes are mutually exclusive, exactly as dbt's
+    # int_survey_elements treats them: pages[].elements[] wins; top-level
+    # elements[] is the fallback only when there's no pages array. Walking both
+    # would diverge from the warehouse on a definition carrying both keys
+    # (invariant 4) and double-count those questions.
     pages = definition.get("pages")
     if isinstance(pages, list):
         for page in pages:
@@ -83,6 +81,7 @@ def _iter_elements(definition: dict[str, Any]) -> Iterator[dict[str, Any]]:
                 for element in page.get("elements", []) or []:
                     if isinstance(element, dict):
                         yield element
+        return
     for element in definition.get("elements", []) or []:
         if isinstance(element, dict):
             yield element
@@ -110,14 +109,6 @@ def _choice_value(choice: Any) -> str | None:
         value = choice.get("value")
         return None if value is None else str(value)
     return str(choice)
-
-
-def _row_id(row: Any) -> str | None:
-    # A matrix row id is `value` (SurveyJS) or `name`, or the scalar itself.
-    if isinstance(row, dict):
-        ident = row.get("value", row.get("name"))
-        return None if ident is None else str(ident)
-    return str(row)
 
 
 def _question_name_refs(expression: Any) -> set[str]:
@@ -160,8 +151,6 @@ def _validate_questions(definition: dict[str, Any]) -> set[str]:
 
         if qtype in CHOICE_TYPES:
             _validate_choices(name, element.get("choices"))
-        if qtype in MATRIX_ROW_TYPES:
-            _validate_matrix_rows(name, element.get("rows"))
     return names
 
 
@@ -180,27 +169,29 @@ def _validate_choices(name: str, choices: Any) -> None:
         seen.add(value)
 
 
-def _validate_matrix_rows(name: str, rows: Any) -> None:
-    if not isinstance(rows, list) or not rows:
-        raise InvalidDefinition(f"question {name!r}: matrix requires a non-empty 'rows'")
-    seen: set[str] = set()
-    for row in rows:
-        ident = _row_id(row)
-        if ident is None:
-            raise InvalidDefinition(f"question {name!r}: a matrix row is missing an identifier")
-        if ident in seen:
-            raise InvalidDefinition(f"question {name!r}: duplicate matrix row id {ident!r}")
-        seen.add(ident)
+def _calculated_value_names(definition: dict[str, Any]) -> set[str]:
+    # SurveyJS calculatedValues are legal `{name}` targets in expressions, so
+    # they count as defined references (not dangling).
+    names: set[str] = set()
+    calculated = definition.get("calculatedValues")
+    if isinstance(calculated, list):
+        for entry in calculated:
+            if isinstance(entry, dict) and entry.get("name"):
+                names.add(entry["name"])
+    return names
 
 
 def _validate_visible_if(definition: dict[str, Any], question_names: set[str]) -> None:
-    """Every question referenced by a visibleIf/enableIf must exist (no dangling
-    references). Routing is captured at submit, never reconstructed in SQL
-    (invariant 3) — this is a publish-time reference check, not evaluation."""
+    """Reject dangling references: a question's visibleIf/enableIf may only
+    reference a defined question or calculatedValue. A publish-time *reference*
+    check, not evaluation — the round-trip oracle (next gate stage) exercises the
+    full expression semantics; routing itself is captured at submit, never
+    re-evaluated downstream (invariant 3)."""
+    defined = question_names | _calculated_value_names(definition)
     for element in _iter_elements(definition):
         for prop in ("visibleIf", "enableIf"):
             for ref in _question_name_refs(element.get(prop)):
-                if ref not in question_names:
+                if ref not in defined:
                     owner = element.get("name") or "<element>"
                     raise InvalidDefinition(
                         f"question {owner!r}: {prop} references unknown question {ref!r}"

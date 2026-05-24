@@ -33,6 +33,7 @@
  */
 import { readFileSync, writeSync } from 'node:fs';
 import process from 'node:process';
+import { pathToFileURL } from 'node:url';
 
 import pkg from 'survey-core';
 
@@ -50,8 +51,10 @@ const MAX_BRANCHES = 512;
 function expressionRefs(expr) {
   if (typeof expr !== 'string') return [];
   const refs = [];
-  let match;
-  while ((match = BRACE_REF.exec(expr)) !== null) {
+  // matchAll (not exec in a loop) so the global regex's lastIndex is never
+  // shared across calls — a missed {ref} would under-enumerate drivers and let
+  // an unreachable branch falsely pass.
+  for (const match of expr.matchAll(BRACE_REF)) {
     const base = match[1].trim().split(/[.[]/, 1)[0].trim();
     if (base && !CONTEXT_VARS.has(base)) refs.push(base);
   }
@@ -151,7 +154,8 @@ export function analyzeSurvey(definition) {
 }
 
 // CLI entry: read a definition JSON from stdin, write the verdict to stdout.
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Compare via pathToFileURL so paths with spaces/encoding match correctly.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   let input;
   try {
     input = readFileSync(0, 'utf8');

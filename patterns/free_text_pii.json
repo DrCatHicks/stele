@@ -1,6 +1,6 @@
 {
   "title": "Free-text questions and PII risk",
-  "description": "text (single line) and comment (multi-line). Free-text answers route by pii_risk: 'high' (the default) is kept out of the marts value_text and copied to the PII store for review; 'low' requires an explicit rationale and reaches value_text directly.",
+  "description": "text (single line) and comment (multi-line). Free-text answers route by pii_risk: 'high' (the default) is kept out of marts.value_text and copied to the PII store for review; 'low' requires an explicit rationale and reaches marts.value_text directly.",
   "pages": [
     {
       "name": "p1",

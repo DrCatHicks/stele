@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -37,6 +38,15 @@ _pattern = pytest.mark.parametrize(
 )
 
 
+def _load(pattern_path: Path) -> dict[str, Any]:
+    """Load a pattern as a SurveyJS definition object. Pinning utf-8 keeps the
+    read locale-independent; the dict assertion fails fast with a clear message
+    before the type-specific checks below run on a non-object."""
+    definition = json.loads(pattern_path.read_text(encoding="utf-8"))
+    assert isinstance(definition, dict), "a pattern must be a SurveyJS definition object"
+    return definition
+
+
 def test_patterns_dir_is_populated() -> None:
     # A glob that silently matches nothing would make every parametrized test
     # below vacuously pass — guard against an empty/moved directory.
@@ -45,15 +55,14 @@ def test_patterns_dir_is_populated() -> None:
 
 @_pattern
 def test_pattern_is_valid_json(pattern_path: Path) -> None:
-    definition = json.loads(pattern_path.read_text())
-    assert isinstance(definition, dict), "a pattern must be a SurveyJS definition object"
+    _load(pattern_path)
 
 
 @_pattern
 def test_pattern_passes_publish_lint(pattern_path: Path) -> None:
     # The synchronous gate stages (schema + lint + PII). Raises InvalidDefinition
     # on any failure, failing the test with the gate's own message.
-    validate_definition(json.loads(pattern_path.read_text()))
+    validate_definition(_load(pattern_path))
 
 
 @pytest.mark.skipif(
@@ -64,4 +73,4 @@ def test_pattern_passes_publish_lint(pattern_path: Path) -> None:
 def test_pattern_passes_round_trip(pattern_path: Path) -> None:
     # The real oracle: every branch reachable, no expression errors. Raises
     # InvalidDefinition (unreachable/expression) or RoundTripUnavailable.
-    _REAL_RUN_ROUND_TRIP(json.loads(pattern_path.read_text()))
+    _REAL_RUN_ROUND_TRIP(_load(pattern_path))

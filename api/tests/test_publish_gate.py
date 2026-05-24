@@ -61,6 +61,22 @@ def test_nameless_display_element_ignored() -> None:
     validate_definition(_def({"type": "html", "html": "<p>hi</p>"}, _radio()))
 
 
+def test_null_name_treated_as_display_element() -> None:
+    # A JSON null name is not-a-question to dbt; the validator agrees and skips.
+    validate_definition(_def({"type": "html", "name": None, "html": "x"}, _radio()))
+
+
+def test_empty_string_name_rejected() -> None:
+    with pytest.raises(InvalidDefinition, match="non-empty string"):
+        validate_definition(_def({"type": "radiogroup", "name": "", "choices": ["a"]}))
+
+
+def test_non_string_name_rejected() -> None:
+    # name 0 would become stable_name '0' in dbt — a question, not display.
+    with pytest.raises(InvalidDefinition, match="non-empty string"):
+        validate_definition(_def({"type": "radiogroup", "name": 0, "choices": ["a"]}))
+
+
 # --- duplicate question names ------------------------------------------------
 
 
@@ -102,6 +118,18 @@ def test_duplicate_object_option_value_rejected() -> None:
 def test_distinct_object_choices_pass() -> None:
     choices = [{"value": "a", "text": "A"}, {"value": "b", "text": "B"}]
     validate_definition(_def({"type": "dropdown", "name": "q1", "choices": choices}))
+
+
+def test_boolean_and_string_choice_collapse_rejected() -> None:
+    # dbt renders JSON true as 'true', so [true, "true"] collapses to one option
+    # in the warehouse — the publish dup-check must catch it the same way.
+    with pytest.raises(InvalidDefinition, match="duplicate option value"):
+        validate_definition(_def({"type": "radiogroup", "name": "q1", "choices": [True, "true"]}))
+
+
+def test_null_choice_value_rejected() -> None:
+    with pytest.raises(InvalidDefinition, match="missing a value"):
+        validate_definition(_def({"type": "radiogroup", "name": "q1", "choices": [None]}))
 
 
 # --- shape: pages and elements are mutually exclusive (mirrors dbt) ----------

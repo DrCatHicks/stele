@@ -102,13 +102,27 @@ def extract_free_text_questions(definition: dict[str, Any]) -> list[FreeTextQues
     return questions
 
 
+def _normalize_scalar(value: Any) -> str | None:
+    # Render a scalar the way dbt's int_survey_options does (`#>> '{}'` extracts
+    # a jsonb scalar as unquoted text), so the publish-time uniqueness check
+    # agrees with how the warehouse resolves option_key (invariant 4). A bare
+    # Python str() diverges: str(True) == 'True' (dbt: 'true'), str(None) ==
+    # 'None' (dbt: SQL NULL → missing). JSON null is treated as missing.
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
 def _choice_value(choice: Any) -> str | None:
-    # Mirror int_survey_options: an object choice keys on `value`; a scalar is
-    # the value itself (stringified for comparison).
+    # An object choice keys on `value`; a scalar is the value itself. Both pass
+    # through the dbt-matching scalar normalization above.
     if isinstance(choice, dict):
-        value = choice.get("value")
-        return None if value is None else str(value)
-    return str(choice)
+        return _normalize_scalar(choice.get("value"))
+    return _normalize_scalar(choice)
 
 
 def _question_name_refs(expression: Any) -> set[str]:
@@ -133,11 +147,18 @@ def _validate_questions(definition: dict[str, Any]) -> set[str]:
     """Schema + per-question lint. Returns the set of defined question names."""
     names: set[str] = set()
     for element in _iter_elements(definition):
-        name = element.get("name")
-        if not name:
-            # Nameless elements are display-only (html/image/…). dbt treats
-            # name-bearing elements as questions; we gate the same boundary.
+        raw_name = element.get("name")
+        if raw_name is None:
+            # No name (key absent or JSON null) → display-only element
+            # (html/image/…). dbt treats a null `name` as not-a-question; we
+            # gate the same boundary.
             continue
+        if not isinstance(raw_name, str) or not raw_name:
+            # A present-but-non-string/empty name would still be a question to
+            # dbt (`->> 'name'` casts 0 → '0', '' is not null), creating a bogus
+            # or empty stable_name. Reject rather than silently skip it.
+            raise InvalidDefinition(f"question name must be a non-empty string, got {raw_name!r}")
+        name = raw_name
         if name in names:
             raise InvalidDefinition(f"duplicate question name {name!r} is not allowed")
         names.add(name)

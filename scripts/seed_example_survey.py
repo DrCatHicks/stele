@@ -97,7 +97,10 @@ SUBMISSIONS: list[tuple[list[str], dict[str, str]]] = [
 
 async def seed() -> None:
     async with SessionLocal() as session:
-        survey = await service.create_draft(session, DEFINITION)
+        # Fixture data, not a real-respondent survey — skip the publish round-trip
+        # gate so seeding doesn't require the Node/survey-core toolchain (the dbt
+        # CI job seeds without installing frontend deps).
+        survey = await service.create_draft(session, DEFINITION, for_real_respondents=False)
         published = await service.publish(session, survey.survey_id, survey.version)
         assert published.definition_hash is not None
 

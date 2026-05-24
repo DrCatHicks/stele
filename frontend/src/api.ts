@@ -193,9 +193,11 @@ export async function triggerWithdrawal(
 // --- PII free-text review (reviewer) ---------------------------------------
 
 export type ReviewStatus = 'pending' | 'promoted' | 'rejected';
+// A recorded decision is only ever one of these (pending = no decision row).
+export type DecisionStatus = 'promoted' | 'rejected';
 
 // A high-risk free-text answer in the screening queue. value_text is the PII the
-// reviewer screens; status is null while pending.
+// reviewer screens; status is null while pending, else a recorded decision.
 export interface FreeTextReviewItem {
   id: number;
   raw_response_id: number;
@@ -205,14 +207,14 @@ export interface FreeTextReviewItem {
   question_name: string;
   value_text: string | null;
   created_at: string;
-  status: string | null;
+  status: DecisionStatus | null;
 }
 
 export interface FreeTextDecision {
   free_text_id: number;
   raw_response_id: number;
   question_name: string;
-  status: string;
+  status: DecisionStatus;
   reviewed_at: string;
 }
 

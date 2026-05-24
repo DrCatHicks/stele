@@ -284,7 +284,10 @@ def _validate_matrix(name: str, element: dict[str, Any]) -> list[str]:
         return [f"{name}.{row}" for row in rows]
 
     # matrixdropdown: each column is a typed sub-question keyed by its `name`.
-    seen_names: list[str] = []
+    # col_names stays an ordered list — it carries the column order through to the
+    # returned sub-question names (the `in` check below also rejects duplicates, so
+    # order is the only thing a set would lose; column counts are tiny).
+    col_names: list[str] = []
     shared_choices = element.get("choices")
     default_cell = element.get("cellType", "dropdown")
     for column in columns:
@@ -293,11 +296,11 @@ def _validate_matrix(name: str, element: dict[str, Any]) -> list[str]:
                 f"question {name!r}: every matrixdropdown column needs a 'name'"
             )
         col_name = column["name"]
-        if col_name in seen_names:
+        if col_name in col_names:
             raise InvalidDefinition(
                 f"question {name!r}: duplicate matrixdropdown column {col_name!r}"
             )
-        seen_names.append(col_name)
+        col_names.append(col_name)
         cell_type = column.get("cellType", default_cell)
         if cell_type not in MATRIX_CELL_TYPES:
             raise InvalidDefinition(
@@ -306,7 +309,7 @@ def _validate_matrix(name: str, element: dict[str, Any]) -> list[str]:
             )
         # A column's choices fall back to the matrix-level shared `choices`.
         _validate_choices(f"{name}.{col_name}", column.get("choices", shared_choices))
-    return [f"{name}.{row}.{col}" for row in rows for col in seen_names]
+    return [f"{name}.{row}.{col}" for row in rows for col in col_names]
 
 
 def _calculated_value_names(definition: dict[str, Any]) -> set[str]:

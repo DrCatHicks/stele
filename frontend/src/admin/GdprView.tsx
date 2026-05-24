@@ -29,7 +29,10 @@ export function GdprView() {
 
   const refresh = (): void => {
     listWithdrawals()
-      .then(setAudit)
+      .then((rows) => {
+        setAudit(rows);
+        setError(null);
+      })
       .catch((err: unknown) => setError(errorMessage(err)));
   };
 

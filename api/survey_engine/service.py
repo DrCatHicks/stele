@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
 from sqlalchemy import CursorResult, delete, func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.survey_engine.models import (
@@ -553,6 +554,10 @@ async def record_free_text_decision(
     decision (status, reviewer, timestamp, note) rather than inserting a duplicate
     — the (raw_response_id, question_name) unique constraint is the anchor.
 
+    The write is a single-statement INSERT ... ON CONFLICT DO UPDATE so two
+    concurrent decisions on the same answer can't race a SELECT-then-write into a
+    constraint violation; the upsert resolves to one row either way.
+
     Raises FreeTextResponseNotFound if free_text_id is unknown.
     """
     free_text = (
@@ -562,31 +567,25 @@ async def record_free_text_decision(
         raise FreeTextResponseNotFound
 
     decided_at = datetime.now(UTC)
-    existing = (
-        await session.execute(
-            select(FreeTextReviewDecision).where(
-                FreeTextReviewDecision.raw_response_id == free_text.raw_response_id,
-                FreeTextReviewDecision.question_name == free_text.question_name,
-            )
+    insert_stmt = pg_insert(FreeTextReviewDecision).values(
+        raw_response_id=free_text.raw_response_id,
+        question_name=free_text.question_name,
+        status=status,
+        reviewed_by=reviewer_id,
+        reviewed_at=decided_at,
+        note=note,
+    )
+    await session.execute(
+        insert_stmt.on_conflict_do_update(
+            constraint="uq_free_text_review_decisions_raw_question",
+            set_={
+                "status": status,
+                "reviewed_by": reviewer_id,
+                "reviewed_at": decided_at,
+                "note": note,
+            },
         )
-    ).scalar_one_or_none()
-    if existing is None:
-        session.add(
-            FreeTextReviewDecision(
-                raw_response_id=free_text.raw_response_id,
-                question_name=free_text.question_name,
-                status=status,
-                reviewed_by=reviewer_id,
-                reviewed_at=decided_at,
-                note=note,
-            )
-        )
-    else:
-        existing.status = status
-        existing.reviewed_by = reviewer_id
-        existing.reviewed_at = decided_at
-        existing.note = note
-
+    )
     await session.commit()
     return FreeTextDecisionResult(
         free_text_id=free_text_id,

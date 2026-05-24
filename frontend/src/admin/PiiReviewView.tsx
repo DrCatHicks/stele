@@ -31,6 +31,7 @@ export function PiiReviewView() {
 
   const load = useCallback((next: ReviewStatus): void => {
     setItems(null);
+    setError(null);
     listFreeTextForReview(next)
       .then(setItems)
       .catch((err: unknown) => setError(errorMessage(err)));
@@ -38,6 +39,7 @@ export function PiiReviewView() {
 
   useEffect(() => {
     let active = true;
+    setError(null);
     listFreeTextForReview(status)
       .then((rows) => {
         if (active) setItems(rows);

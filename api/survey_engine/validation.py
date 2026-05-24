@@ -41,19 +41,37 @@ MULTI_SELECT_TYPES = frozenset({"checkbox"})
 # semantics live downstream.
 RANKED_TYPES = frozenset({"ranking"})
 
-# Every option-bearing type shares the same `choices` lint.
+# Every option-bearing (top-level `choices`) type shares the same `choices` lint.
 OPTION_TYPES = CHOICE_TYPES | MULTI_SELECT_TYPES | RANKED_TYPES
+
+# Matrix types (M5.3). A matrix decomposes into one single-select sub-question per
+# cell (row by column) — keyed by the row (and, for matrixdropdown, the column).
+# dbt expands each into its own dim_question (stable_name = "matrix.row[.column]")
+# resolving to an option_key, so the fact grain handles them uniformly with
+# single-select (design-doc §3.5, FR-4 "matrix sub-questions"). 'matrix' is a
+# single radio choice per row over shared `columns`; 'matrixdropdown' has a typed
+# editor per column (we support the option-based cell types only — see
+# MATRIX_CELL_TYPES). Rows/columns must carry stable identifiers, enforced below
+# (FR-2 "missing matrix row identifiers" lint).
+MATRIX_TYPES = frozenset({"matrix", "matrixdropdown"})
+
+# matrixdropdown cell types we support end-to-end: each resolves a single scalar
+# answer to an option_key, exactly like a single-select. Free-text / scalar /
+# multi-select cells (comment, text, rating, checkbox, …) need value_text/PII or
+# array fan-out per cell — deferred with the rest of the scalar/repeating slice;
+# rejected at publish so the answer can't be silently dropped downstream.
+MATRIX_CELL_TYPES = frozenset({"dropdown", "radiogroup"})
 
 # Question types we support end-to-end enough to publish. A name-bearing element
 # of any other type is rejected — you can't publish a type the runtime, gate and
 # dbt staging don't all handle (CLAUDE.md §"New question type = three places").
 # Still narrow by design: fact_response_item populates option_key (single/multi/
-# ranked choice) and value_text (free-text); value_numeric/value_date stay
-# unpopulated, so rating/numeric/date answers would land as all-null fact rows —
-# silently dropped and indistinguishable from "shown & skipped". Those, plus
-# matrix / repeating groups, each rejoin here in a later M5 story alongside their
-# dbt staging + tests.
-KNOWN_QUESTION_TYPES = FREE_TEXT_TYPES | OPTION_TYPES
+# ranked choice + matrix cell) and value_text (free-text); value_numeric/value_date
+# stay unpopulated, so rating/numeric/date answers would land as all-null fact rows
+# — silently dropped and indistinguishable from "shown & skipped". Those, plus
+# repeating groups, each rejoin here in a later M5 story alongside their dbt
+# staging + tests.
+KNOWN_QUESTION_TYPES = FREE_TEXT_TYPES | OPTION_TYPES | MATRIX_TYPES
 
 # SurveyJS context variables that may appear as `{base...}` inside an expression
 # without being a question name (dynamic panels/matrix rows, self-reference). A
@@ -187,6 +205,8 @@ def _validate_questions(definition: dict[str, Any]) -> set[str]:
 
         if qtype in OPTION_TYPES:
             _validate_choices(name, element.get("choices"))
+        elif qtype in MATRIX_TYPES:
+            _validate_matrix(name, element)
     return names
 
 
@@ -203,6 +223,74 @@ def _validate_choices(name: str, choices: Any) -> None:
         if value in seen:
             raise InvalidDefinition(f"question {name!r}: duplicate option value {value!r}")
         seen.add(value)
+
+
+def _matrix_rows(name: str, element: dict[str, Any]) -> list[str]:
+    """Row identifiers for a matrix. Every row must carry a value (FR-2 'missing
+    matrix row identifiers') and rows must be unique — each becomes a sub-question
+    identity downstream (stable_name = "matrix.row"), so a missing or duplicate
+    row id would collide or vanish in the warehouse."""
+    rows = element.get("rows")
+    if not isinstance(rows, list) or not rows:
+        raise InvalidDefinition(f"question {name!r}: matrix requires a non-empty 'rows'")
+    seen: set[str] = set()
+    values: list[str] = []
+    for row in rows:
+        value = _choice_value(row)
+        if value is None:
+            raise InvalidDefinition(f"question {name!r}: a matrix row is missing an identifier")
+        if value in seen:
+            raise InvalidDefinition(f"question {name!r}: duplicate matrix row {value!r}")
+        seen.add(value)
+        values.append(value)
+    return values
+
+
+def _validate_matrix(name: str, element: dict[str, Any]) -> None:
+    """Lint a matrix / matrixdropdown: row ids, column ids, and (for
+    matrixdropdown) per-column cell type + choices. Each cell resolves to an
+    option_key downstream, so the column choices get the same uniqueness lint as
+    a single-select's `choices`."""
+    _matrix_rows(name, element)
+    columns = element.get("columns")
+    if not isinstance(columns, list) or not columns:
+        raise InvalidDefinition(f"question {name!r}: matrix requires a non-empty 'columns'")
+
+    if element.get("type") == "matrix":
+        # Columns are the shared option set every row chooses from.
+        seen: set[str] = set()
+        for column in columns:
+            value = _choice_value(column)
+            if value is None:
+                raise InvalidDefinition(f"question {name!r}: a matrix column is missing a value")
+            if value in seen:
+                raise InvalidDefinition(f"question {name!r}: duplicate matrix column {value!r}")
+            seen.add(value)
+        return
+
+    # matrixdropdown: each column is a typed sub-question keyed by its `name`.
+    seen_names: set[str] = set()
+    shared_choices = element.get("choices")
+    default_cell = element.get("cellType", "dropdown")
+    for column in columns:
+        if not isinstance(column, dict) or not column.get("name"):
+            raise InvalidDefinition(
+                f"question {name!r}: every matrixdropdown column needs a 'name'"
+            )
+        col_name = column["name"]
+        if col_name in seen_names:
+            raise InvalidDefinition(
+                f"question {name!r}: duplicate matrixdropdown column {col_name!r}"
+            )
+        seen_names.add(col_name)
+        cell_type = column.get("cellType", default_cell)
+        if cell_type not in MATRIX_CELL_TYPES:
+            raise InvalidDefinition(
+                f"question {name!r}: matrixdropdown column {col_name!r} cellType {cell_type!r} "
+                f"is not supported (supported: {', '.join(sorted(MATRIX_CELL_TYPES))})"
+            )
+        # A column's choices fall back to the matrix-level shared `choices`.
+        _validate_choices(f"{name}.{col_name}", column.get("choices", shared_choices))
 
 
 def _calculated_value_names(definition: dict[str, Any]) -> set[str]:

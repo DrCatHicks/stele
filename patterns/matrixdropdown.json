@@ -1,0 +1,38 @@
+{
+  "title": "Matrix dropdown (typed cells)",
+  "description": "matrixdropdown — a grid whose cells are typed editors, one per (row, column). The answer is a nested object {row: {column: value}}, e.g. {\"laptop\": {\"brand\": \"apple\", \"os\": \"mac\"}}. The warehouse decomposes it into one sub-question per cell (stable_name \"devices.laptop.brand\", \"devices.laptop.os\", …), each resolving to an option_key. M5.3 supports option-based cell types only (dropdown / radiogroup); free-text, rating, and other cell types are rejected at publish until their value storage + PII routing land. A column's own `choices` win; otherwise it inherits the matrix-level shared `choices`.",
+  "pages": [
+    {
+      "name": "p1",
+      "elements": [
+        {
+          "type": "matrixdropdown",
+          "name": "devices",
+          "title": "Tell us about your devices",
+          "columns": [
+            {
+              "name": "brand",
+              "title": "Brand",
+              "cellType": "dropdown",
+              "choices": ["apple", "dell", "lenovo"]
+            },
+            {
+              "name": "os",
+              "title": "Operating system",
+              "cellType": "radiogroup",
+              "choices": [
+                { "value": "mac", "text": "macOS" },
+                { "value": "win", "text": "Windows" },
+                { "value": "linux", "text": "Linux" }
+              ]
+            }
+          ],
+          "rows": [
+            { "value": "laptop", "text": "Laptop" },
+            { "value": "phone", "text": "Phone" }
+          ]
+        }
+      ]
+    }
+  ]
+}

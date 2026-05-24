@@ -20,6 +20,13 @@ models:
     columns:
       - name: question_id
         data_tests: [unique, not_null]
+      - name: matrix_name
+        description: >
+          For a matrix cell sub-question (M5.3), the matrix element's own name —
+          the entry in the captured shown-set that governs the sub-question's
+          visibility (shown_set_integrity / routed_past_not_in_shown_set resolve
+          was_shown against this, since the composite stable_name is never in
+          shown_questions). Null for a plain (non-matrix) question.
 
   - name: dim_question_version
     columns:
@@ -32,6 +39,14 @@ models:
               arguments:
                 to: ref('dim_question')
                 field: question_id
+      - name: matrix_name
+        description: >
+          Matrix decomposition (M5.3): the matrix element name, and the cell's
+          row (matrix_row) and — for matrixdropdown — column (matrix_column), so a
+          matrix can be pivoted without parsing the composite stable_name. All
+          null for a plain question.
+      - name: matrix_row
+      - name: matrix_column
 
   - name: dim_option
     columns:

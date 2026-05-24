@@ -1,10 +1,13 @@
 -- Selection-grain expansion of int_response_answers: an array-valued answer
 -- (multi-select checkbox, M5.1; ranking, M5.2) fans out to one row per chosen
 -- option; every other answered question and every unanswered question stays a
--- single row. This model owns that fan-out AND all the Postgres-specific JSON
--- handling for answers, so the marts (fact_response_item) stay portable — the
--- same staging+intermediate confinement documented in stg_raw_responses
--- (CLAUDE.md dbt portability; design-doc §5).
+-- single row. A matrix sub-question (M5.3) is a single-select scalar by the time
+-- it reaches here (int_response_answers already navigated the nested payload to
+-- the chosen cell value), so it takes the single-row path like any single-select.
+-- This model owns that fan-out AND all the Postgres-specific JSON handling for
+-- answers, so the marts (fact_response_item) stay portable — the same
+-- staging+intermediate confinement documented in stg_raw_responses (CLAUDE.md
+-- dbt portability; design-doc §5).
 --
 -- A LEFT JOIN LATERAL over the (possibly empty) answer array guarantees the
 -- single row survives when the lateral yields nothing — a scalar/non-array

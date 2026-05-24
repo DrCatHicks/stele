@@ -15,6 +15,11 @@ select
     -- int_survey_questions. Null for non-free-text / untagged questions.
     min(pii_risk) as pii_risk,
     min(published_at) as first_published_at,
+    -- Matrix decomposition (M5.3): for a matrix cell sub-question, the matrix
+    -- element's own name — the shown-set entry governing it, which
+    -- shown_set_integrity resolves was_shown against (not the composite
+    -- stable_name); null for a plain question. Deterministic per stable_name.
+    min(matrix_name) as matrix_name,
     cast(null as text) as parent_question_id,
     cast(null as text) as parent_question_rationale
 from {{ ref('int_survey_questions') }}

@@ -18,7 +18,10 @@ fact_shown as (
         fri.fact_id,
         fri.respondent_id,
         fri.survey_version_id,
-        dq.stable_name
+        -- A matrix cell sub-question is shown iff its matrix is, so resolve
+        -- against the matrix's own name (the shown-set entry); a plain question
+        -- uses its own stable_name (M5.3).
+        coalesce(dq.matrix_name, dq.stable_name) as shown_name
     from {{ ref('fact_response_item') }} as fri
     inner join {{ ref('dim_question') }} as dq
         on fri.question_id = dq.question_id
@@ -30,5 +33,5 @@ from fact_shown as fs
 left join raw_shown as rs
     on fs.respondent_id = rs.respondent_id
     and fs.survey_version_id = rs.survey_version_id
-    and fs.stable_name = rs.stable_name
+    and fs.shown_name = rs.stable_name
 where rs.stable_name is null

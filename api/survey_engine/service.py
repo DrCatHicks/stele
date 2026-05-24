@@ -11,7 +11,6 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
@@ -31,9 +30,20 @@ from api.survey_engine.models import (
 )
 from api.survey_engine.schemas import ResponseSubmit
 
-# SurveyJS free-text element types. value goes to value_text downstream, routed
-# by pii_risk (design doc §3.9). Other types resolve via options / numeric / date.
-FREE_TEXT_TYPES = frozenset({"text", "comment"})
+# Publish-time definition validation (schema + lint + PII gate) lives in
+# validation.py. Re-exported here so callers (router catches
+# service.InvalidDefinition) and submit_response keep one import surface.
+from api.survey_engine.validation import (
+    InvalidDefinition,
+    extract_free_text_questions,
+    validate_definition,
+)
+
+__all__ = [
+    "InvalidDefinition",
+    "extract_free_text_questions",
+    "validate_definition",
+]
 
 
 class SurveyNotFound(Exception):
@@ -42,10 +52,6 @@ class SurveyNotFound(Exception):
 
 class SurveyConflict(Exception):
     """Operation not allowed in the survey's current state."""
-
-
-class InvalidDefinition(Exception):
-    """Definition failed publish-time validation."""
 
 
 class SubmissionRejected(Exception):
@@ -61,21 +67,6 @@ def canonical_hash(definition: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-@dataclass(frozen=True)
-class FreeTextQuestion:
-    """A free-text question and its PII-risk tagging, read from the definition."""
-
-    name: str
-    pii_risk: str | None
-    pii_risk_rationale: str | None
-
-    @property
-    def effective_risk(self) -> str:
-        # Absent pii_risk defaults to 'high' — the safe path is the default
-        # (design doc §3.9, CLAUDE.md §"silent defaults").
-        return self.pii_risk or "high"
-
-
 def _free_text_answer_to_text(answer: Any) -> str | None:
     if answer is None:
         return None
@@ -83,65 +74,6 @@ def _free_text_answer_to_text(answer: Any) -> str | None:
         return answer
     # Keep non-string JSON payload values auditable and stable in storage.
     return json.dumps(answer, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-
-
-def _iter_elements(definition: dict[str, Any]) -> Iterator[dict[str, Any]]:
-    # Both SurveyJS shapes: pages[].elements[] and top-level elements[]. Mirrors
-    # the unnest in dbt's int_survey_elements so API and warehouse agree on what
-    # counts as a question.
-    pages = definition.get("pages")
-    if isinstance(pages, list):
-        for page in pages:
-            if isinstance(page, dict):
-                for element in page.get("elements", []) or []:
-                    if isinstance(element, dict):
-                        yield element
-    for element in definition.get("elements", []) or []:
-        if isinstance(element, dict):
-            yield element
-
-
-def extract_free_text_questions(definition: dict[str, Any]) -> list[FreeTextQuestion]:
-    """Free-text questions (SurveyJS text/comment) with their pii_risk tagging."""
-    questions: list[FreeTextQuestion] = []
-    for element in _iter_elements(definition):
-        if element.get("type") in FREE_TEXT_TYPES and element.get("name"):
-            questions.append(
-                FreeTextQuestion(
-                    name=element["name"],
-                    pii_risk=element.get("pii_risk"),
-                    pii_risk_rationale=element.get("pii_risk_rationale"),
-                )
-            )
-    return questions
-
-
-def validate_definition(definition: dict[str, Any]) -> None:
-    # Minimal gate for the slice. Full schema/lint/round-trip checks land in M3.
-    if not definition:
-        raise InvalidDefinition("definition must be a non-empty object")
-    if "pages" not in definition and "elements" not in definition:
-        raise InvalidDefinition("definition must contain 'pages' or 'elements'")
-    # Free-text PII gate (invariant 6): pii_risk must be low/high if set, and a
-    # downgrade to 'low' demands an explicit rationale at definition time. Never
-    # silently downgrade — the default is 'high'.
-    seen_free_text_names: set[str] = set()
-    for question in extract_free_text_questions(definition):
-        if question.name in seen_free_text_names:
-            raise InvalidDefinition(
-                f"duplicate free-text question name {question.name!r} is not allowed"
-            )
-        seen_free_text_names.add(question.name)
-        if question.pii_risk is not None and question.pii_risk not in ("low", "high"):
-            raise InvalidDefinition(
-                f"question '{question.name}': pii_risk must be 'low' or 'high', "
-                f"got {question.pii_risk!r}"
-            )
-        if question.effective_risk == "low" and not (question.pii_risk_rationale or "").strip():
-            raise InvalidDefinition(
-                f"question '{question.name}': downgrading pii_risk to 'low' requires a "
-                "non-empty pii_risk_rationale"
-            )
 
 
 async def _get(

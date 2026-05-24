@@ -93,7 +93,13 @@ fact_response_item_rows as (
             else false
         end as value_text_redacted,
         s.was_shown,
-        cast(null as int) as rank
+        -- rank is populated only for a ranking question, where the selection's
+        -- 1-based array position is its rank (M5.2). Null for every other type —
+        -- a checkbox selection has an ordinal too, but it's an arbitrary
+        -- tiebreaker there, not a rank, so it stays null.
+        case
+            when s.question_type = 'ranking' then s.selection_ordinal::int
+        end as rank
     from selections as s
     left join {{ ref('dim_option') }} as o
         on s.question_version_id = o.question_version_id

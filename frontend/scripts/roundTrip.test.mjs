@@ -4,6 +4,7 @@ import { analyzeSurvey } from './roundTrip.mjs';
 
 const radio = (name, choices, extra = {}) => ({ type: 'radiogroup', name, choices, ...extra });
 const checkbox = (name, choices, extra = {}) => ({ type: 'checkbox', name, choices, ...extra });
+const ranking = (name, choices, extra = {}) => ({ type: 'ranking', name, choices, ...extra });
 const survey = (...elements) => ({ pages: [{ name: 'p1', elements }] });
 
 describe('analyzeSurvey', () => {
@@ -68,6 +69,24 @@ describe('analyzeSurvey', () => {
     const def = survey(
       checkbox('langs', ['py', 'sql']),
       radio('followup', ['x', 'y'], { visibleIf: "{langs} contains 'rust'" }),
+    );
+    const verdict = analyzeSurvey(def);
+    expect(verdict.ok).toBe(true);
+    expect(verdict.unreachable).toEqual([]);
+  });
+
+  it('loads a ranked (ranking) survey without errors', () => {
+    const verdict = analyzeSurvey(survey(ranking('priorities', ['speed', 'cost', 'quality'])));
+    expect(verdict.ok).toBe(true);
+  });
+
+  it('does not flag unreachable when the driver is a ranking question', () => {
+    // A ranking answer is an ordered permutation array, not a scalar; like
+    // checkbox it isn't enumerated as a driver, so a ranking-gated question is
+    // never false-rejected even under an unsatisfiable-looking visibleIf.
+    const def = survey(
+      ranking('priorities', ['speed', 'cost']),
+      radio('followup', ['x', 'y'], { visibleIf: "{priorities} contains 'rust'" }),
     );
     const verdict = analyzeSurvey(def);
     expect(verdict.ok).toBe(true);

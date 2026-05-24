@@ -27,13 +27,14 @@ dbt staging don't all handle — CLAUDE.md §"New question type = three places")
 | `radiogroup` | single-select | `option_key` (via `dim_option`) |
 | `dropdown` | single-select | `option_key` (via `dim_option`) |
 | `checkbox` | multi-select | one `option_key` row per chosen option (fan-out) |
+| `ranking` | ranked-choice | one `option_key` row per ranked option, each with a `rank` (fan-out) |
 | `text` | free-text (single line) | `value_text`, routed by `pii_risk` |
 | `comment` | free-text (multi-line) | `value_text`, routed by `pii_risk` |
 
-Matrix, ranking, rating, boolean, numeric, and date types are **not yet
-publishable** — they each arrive in a later M5 story alongside their dbt staging
-and tests. Until then they'd land as all-null fact rows, silently
-indistinguishable from "shown & skipped".
+Matrix, rating, boolean, numeric, and date types are **not yet publishable** —
+they each arrive in a later M5 story alongside their dbt staging and tests. Until
+then they'd land as all-null fact rows, silently indistinguishable from "shown &
+skipped".
 
 ## The patterns
 
@@ -41,6 +42,7 @@ indistinguishable from "shown & skipped".
 |---|---|
 | [single_select.json](single_select.json) | `radiogroup` and `dropdown`; scalar choices vs. `{value, text}` object choices |
 | [multi_select.json](multi_select.json) | `checkbox`; array answers that fan out to one `option_key` row per selection |
+| [ranked.json](ranked.json) | `ranking`; ordered array answers that fan out to one `option_key` row per option, each carrying its `rank` |
 | [free_text_pii.json](free_text_pii.json) | `text`/`comment` and the `pii_risk` routing (default `high`; `low` needs a rationale) |
 | [branching.json](branching.json) | `visibleIf` conditional routing, including complementary branches |
 | [multi_page.json](multi_page.json) | multiple pages; a `visibleIf` referencing an answer from an earlier page |
@@ -81,7 +83,8 @@ M4.1 lint still confirms the reference resolves. If you gate visibility on a
 `calculatedValue`, **self-test those branches in the draft preview**; the
 automated round-trip won't cover them for you.
 
-The same caveat applies to **`checkbox` drivers**: a multi-select's branch space
-is the power set of its options (exponential), so the oracle does not enumerate it
-and never flags a question gated on a checkbox as unreachable. Self-test those
-branches in the preview too.
+The same caveat applies to **`checkbox` and `ranking` drivers**: a multi-select's
+branch space is the power set of its options and a ranking's is the permutations
+of its options — both non-scalar — so the oracle does not enumerate them and never
+flags a question gated on one as unreachable. Self-test those branches in the
+preview too.

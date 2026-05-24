@@ -43,6 +43,13 @@ const { Model } = pkg;
 const BRACE_REF = /\{([^{}]+)\}/g;
 // Context variables that are not question names (dynamic panel/matrix rows, self).
 const CONTEXT_VARS = new Set(['row', 'panel', 'composite', 'self', 'parent']);
+// Array-valued question types whose branch space is not scalar-enumerable. A
+// checkbox answer is a subset (power set, exponential); a ranking answer is an
+// ordered permutation. Setting a single scalar where survey-core expects an
+// array would mis-evaluate a `{q} contains x` / `{q} = [...]` driver, so these
+// are never enumerated as drivers — a question gated by one is never flagged
+// unreachable (only load/expression errors are caught). Never false-reject.
+const NON_ENUMERABLE_DRIVER_TYPES = new Set(['checkbox', 'ranking']);
 // Cap on the enumerated branch space. Past this we still load + render once, but
 // skip unreachability analysis rather than risk a slow run or a false reject.
 const MAX_BRANCHES = 512;
@@ -94,16 +101,14 @@ export function analyzeSurvey(definition) {
   for (const q of gated) for (const ref of expressionRefs(q.visibleIf)) driverNames.add(ref);
 
   // Only single-select choice drivers are enumerable; candidates are each option
-  // value plus "unanswered" (undefined). Multi-select (checkbox) is deliberately
-  // excluded: its branch space is the power set of its options (exponential), and
-  // setting a single scalar where survey-core expects an array would mis-evaluate
-  // a `{q} contains x` driver and risk a false reject. A question gated by a
-  // checkbox is therefore never flagged unreachable — only load/expression errors
-  // are caught for it. (M5.1; consistent with the never-false-reject contract.)
+  // value plus "unanswered" (undefined). Array-valued drivers (checkbox M5.1,
+  // ranking M5.2) are deliberately excluded — see NON_ENUMERABLE_DRIVER_TYPES.
+  // A question gated by one is therefore never flagged unreachable; only
+  // load/expression errors are caught for it (never-false-reject contract).
   const enumerable = [...driverNames].filter(
     (name) =>
       byName.has(name) &&
-      byName.get(name).getType() !== 'checkbox' &&
+      !NON_ENUMERABLE_DRIVER_TYPES.has(byName.get(name).getType()) &&
       choiceValues(byName.get(name)).length > 0,
   );
   const candidates = enumerable.map((name) => [undefined, ...choiceValues(byName.get(name))]);

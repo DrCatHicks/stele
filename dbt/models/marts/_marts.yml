@@ -96,6 +96,13 @@ models:
           from this analyst-facing fact table. False for low-risk free text
           (answered and unanswered) and all non-free-text rows.
         data_tests: [not_null]
+      - name: rank
+        description: >
+          1-based ordered position of a ranking-question selection (1 = top
+          ranked). Populated only for ranking questions; null for every other
+          type and for unanswered routing rows. Integrity (rank only on ranking
+          rows, contiguous 1..N per respondent-question) is enforced by the
+          ranking_rank_integrity singular test.
 
   - name: fact_response
     columns:

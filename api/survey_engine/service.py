@@ -8,6 +8,7 @@ invariant 2).
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import uuid
@@ -176,7 +177,9 @@ async def publish(session: AsyncSession, survey_id: uuid.UUID, version: int) -> 
     # going to real respondents — the headless round-trip, then hash + freeze.
     validate_definition(survey.definition_json)
     if survey.for_real_respondents:
-        round_trip.run_round_trip(survey.definition_json)
+        # run_round_trip shells out to Node (subprocess, up to 30s). Off-load it
+        # to a thread so it doesn't block the event loop for other requests.
+        await asyncio.to_thread(round_trip.run_round_trip, survey.definition_json)
     survey.definition_hash = canonical_hash(survey.definition_json)
     survey.status = "published"
     survey.published_at = datetime.now(UTC)

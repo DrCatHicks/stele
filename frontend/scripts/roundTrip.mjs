@@ -21,6 +21,12 @@
  *     the space is within bound; text/number-driven or oversized surveys are
  *     never failed for unreachability, only load/expression errors.
  *
+ * Scope (complemented by the M4.1 Python lint, not duplicated here): this walks
+ * question-level `visibleIf` only. Page/panel-level visibleIf and `enableIf` are
+ * not enumerated — a question inside a hidden panel can still read as visible, so
+ * the gate may false-PASS such a case (it never false-rejects). Dangling
+ * visibleIf/enableIf references are already caught by the publish lint stage.
+ *
  * Usage (CLI): definition JSON on stdin → verdict JSON on stdout.
  *   echo '<definition>' | node frontend/scripts/roundTrip.mjs
  * Verdict: { ok, bounded, checkedBranches, reachable[], unreachable[], errors[] }

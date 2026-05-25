@@ -45,6 +45,18 @@ models:
               arguments:
                 to: ref('dim_question')
                 field: question_id
+      - name: value_kind
+        description: >
+          Which polymorphic value column this question feeds (M5.5): option
+          (option_key), text (value_text), numeric (value_numeric), or date
+          (value_date). Distinguishes a numeric/date `text` input from free text,
+          which response_type cannot. The scalar_value_integrity singular test pins
+          each fact value slot to it.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['option', 'text', 'numeric', 'date']
       - name: matrix_name
         description: >
           Matrix decomposition (M5.3): the matrix element name, and the cell's
@@ -119,12 +131,24 @@ models:
               arguments:
                 to: ref('dim_option')
                 field: option_key
+      - name: value_numeric
+        description: >
+          Numeric answer (M5.5): a rating, a boolean (1=true / 0=false), or a `text`
+          question with inputType number/range. Coerced in int_response_selections;
+          a malformed value (only reachable via the public submit endpoint) is null.
+          Non-null only on value_kind='numeric' rows (scalar_value_integrity).
+      - name: value_date
+        description: >
+          Date answer (M5.5): a `text` question with inputType date, cast from a
+          YYYY-MM-DD answer. Non-null only on value_kind='date' rows
+          (scalar_value_integrity).
       - name: value_text
         description: >
           Free-text answer visibility in fact_response_item. Populated only when
-          question_type is text/comment, effective pii_risk is low, and the
-          respondent answered the question. Null for high-risk free text and for
-          unanswered rows (shown-skipped or routed-past).
+          value_kind is text (free-text text/comment, NOT a numeric/date input),
+          effective pii_risk is low, and the respondent answered the question. Null
+          for high-risk free text and for unanswered rows (shown-skipped or
+          routed-past).
       - name: value_text_redacted
         description: >
           True only for high-risk free-text rows whose value_text was withheld

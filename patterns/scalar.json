@@ -1,0 +1,39 @@
+{
+  "title": "Scalar questions (numeric, date, rating, boolean)",
+  "description": "Answers that land in the polymorphic value columns instead of via an option_key. rating and boolean go to value_numeric (boolean as 1/0); numeric and date are a text question with a numeric/date inputType, going to value_numeric / value_date. None of these touch the PII store — a number, a date, or a rating is not identifying free text.",
+  "pages": [
+    {
+      "name": "p1",
+      "elements": [
+        {
+          "type": "rating",
+          "name": "satisfaction",
+          "title": "How satisfied are you, 1 to 5?",
+          "description": "A rating resolves to value_numeric (the chosen rate value). Numeric rate values only — a text-valued rating ('Low'/'High') is rejected at publish for now.",
+          "rateMin": 1,
+          "rateMax": 5
+        },
+        {
+          "type": "boolean",
+          "name": "would_recommend",
+          "title": "Would you recommend us?",
+          "description": "A boolean resolves to value_numeric as 1 (true) or 0 (false), so AVG(value_numeric) reads as the proportion answering yes. Custom valueTrue/valueFalse are not supported."
+        },
+        {
+          "type": "text",
+          "name": "age",
+          "title": "How old are you?",
+          "description": "A text question with inputType 'number' routes to value_numeric instead of value_text — it is a scalar number, not free text, so it never enters the PII store.",
+          "inputType": "number"
+        },
+        {
+          "type": "text",
+          "name": "started_on",
+          "title": "When did you start?",
+          "description": "A text question with inputType 'date' routes to value_date (parsed from a YYYY-MM-DD answer).",
+          "inputType": "date"
+        }
+      ]
+    }
+  ]
+}

@@ -30,7 +30,7 @@ answers as (
         a.occurrence,
         {{ surrogate_key(['a.survey_id', 'a.survey_version']) }} as survey_version_id,
         {{ surrogate_key(['a.stable_name']) }} as question_id,
-        a.question_type,
+        a.value_kind,
         coalesce(a.pii_risk, 'high') as effective_risk,
         a.answered,
         a.answer_value,
@@ -47,12 +47,13 @@ joined as (
         fri.fact_id,
         fri.value_text,
         fri.value_text_redacted,
-        a.question_type,
+        a.value_kind,
         a.effective_risk,
         a.answered,
         a.answer_value,
-        (a.question_type in ('text', 'comment') and (a.effective_risk = 'low' or a.promoted))
-            as surfaced
+        -- value_kind = 'text' is free text; a numeric/date `text` input (M5.5) is
+        -- value_kind numeric/date and never surfaces / redacts value_text.
+        (a.value_kind = 'text' and (a.effective_risk = 'low' or a.promoted)) as surfaced
     from {{ ref('fact_response_item') }} as fri
     inner join answers as a
         on fri.respondent_id = a.respondent_id
@@ -75,11 +76,12 @@ where
     )
     or (
         -- high-risk free text that was not promoted: stays redacted
-        question_type in ('text', 'comment')
+        value_kind = 'text'
         and not surfaced
         and (value_text is not null or value_text_redacted = false)
     )
     or (
-        question_type not in ('text', 'comment')
+        -- non-free-text (option / numeric / date): never a value_text or redaction
+        value_kind != 'text'
         and (value_text is not null or value_text_redacted = true)
     )

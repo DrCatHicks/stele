@@ -162,6 +162,45 @@ describe('analyzeSurvey', () => {
     expect(verdict.unreachable).toEqual([]);
   });
 
+  it('loads a survey with scalar types (rating, boolean, numeric/date text) without errors', () => {
+    // M5.5 scalar types. None throws on load or on the default render; a rating /
+    // numeric / date question carries no `choices`, so it is never enumerated as a
+    // driver (and a boolean, even if survey-core exposes true/false, only adds valid
+    // scalar branches) — the never-false-reject contract holds.
+    const def = survey(
+      { type: 'rating', name: 'score', rateMax: 5 },
+      { type: 'boolean', name: 'agree' },
+      { type: 'text', name: 'age', inputType: 'number' },
+      { type: 'text', name: 'joined', inputType: 'date' },
+    );
+    const verdict = analyzeSurvey(def);
+    expect(verdict.ok).toBe(true);
+  });
+
+  it('does not flag unreachable when the driver is a numeric text input', () => {
+    // A numeric `text` input has no enumerable choices, so a question gated on a
+    // numeric comparison ({age} > 18) is never false-rejected — like free text.
+    const def = survey(
+      { type: 'text', name: 'age', inputType: 'number' },
+      radio('adultsOnly', ['x', 'y'], { visibleIf: '{age} > 18' }),
+    );
+    const verdict = analyzeSurvey(def);
+    expect(verdict.ok).toBe(true);
+    expect(verdict.unreachable).toEqual([]);
+  });
+
+  it('does not flag unreachable when the driver is a rating question', () => {
+    // A rating's values live in rateValues, not `choices`, so the oracle does not
+    // enumerate it — a rating-gated question is never false-rejected.
+    const def = survey(
+      { type: 'rating', name: 'score', rateMax: 5 },
+      radio('followup', ['x', 'y'], { visibleIf: '{score} >= 99' }),
+    );
+    const verdict = analyzeSurvey(def);
+    expect(verdict.ok).toBe(true);
+    expect(verdict.unreachable).toEqual([]);
+  });
+
   it('returns a structured verdict on degenerate input without throwing', () => {
     // survey-core tolerates a null/empty definition (yields an empty model);
     // the M4.1 schema gate is what rejects empty surveys. The oracle must still

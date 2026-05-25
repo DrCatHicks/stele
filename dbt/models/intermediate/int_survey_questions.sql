@@ -15,6 +15,15 @@
 -- name, and the dims expose them so analysts can pivot without parsing stable_name.
 -- A plain (non-matrix) question carries all three as null and keeps its own name.
 --
+-- value_kind (M5.5) is the single source of which value column a question feeds in
+-- fact_response_item, derived once here so the answer side never re-derives it:
+--   'option'  → resolves to an option_key via dim_option (all choice + matrix cells)
+--   'text'    → value_text, PII-gated (free-text text/comment)
+--   'numeric' → value_numeric (rating, boolean→1/0, and text inputType number/range)
+--   'date'    → value_date (text inputType date)
+-- A panel cell keeps plain option/text semantics — numeric/date cells inside panels
+-- and matrices are deferred — so value_kind is only 'numeric'/'date' at top level.
+--
 -- A paneldynamic question (M5.4) likewise decomposes into one sub-question per
 -- TEMPLATE ELEMENT (stable_name = "panel.element"), but its occurrences are NOT
 -- fixed in the definition — they're driven by the respondent's answer array — so
@@ -52,6 +61,17 @@ scalar_questions as (
         element ->> 'pii_risk' as pii_risk,
         coalesce(element ->> 'title', stable_name) as prompt_text,
         display_order,
+        -- See the header note: rating/boolean → numeric, text inputType number/range
+        -- → numeric and date → date, other free text → text, everything else option.
+        case
+            when question_type in ('rating', 'boolean') then 'numeric'
+            when question_type in ('text', 'comment')
+                and (element ->> 'inputType') in ('number', 'range') then 'numeric'
+            when question_type in ('text', 'comment')
+                and (element ->> 'inputType') = 'date' then 'date'
+            when question_type in ('text', 'comment') then 'text'
+            else 'option'
+        end as value_kind,
         cast(null as text) as matrix_name,
         cast(null as text) as matrix_row,
         cast(null as text) as matrix_column,
@@ -75,6 +95,8 @@ matrix_questions as (
             || ' — '
             || coalesce(mrow.value ->> 'text', {{ matrix_value('mrow.value') }}) as prompt_text,
         e.display_order,
+        -- Every matrix cell resolves to an option_key (single-select over columns).
+        'option' as value_kind,
         e.stable_name as matrix_name,
         {{ matrix_value('mrow.value') }} as matrix_row,
         cast(null as text) as matrix_column,
@@ -104,6 +126,8 @@ matrixdropdown_questions as (
             || ' / '
             || coalesce(mcol.value ->> 'title', mcol.value ->> 'name') as prompt_text,
         e.display_order,
+        -- Supported matrixdropdown cells are option-based (MATRIX_CELL_TYPES) → option_key.
+        'option' as value_kind,
         e.stable_name as matrix_name,
         {{ matrix_value('mrow.value') }} as matrix_row,
         mcol.value ->> 'name' as matrix_column,
@@ -135,6 +159,12 @@ paneldynamic_questions as (
             || ' — '
             || coalesce(tmpl.value ->> 'title', tmpl.value ->> 'name') as prompt_text,
         e.display_order,
+        -- A panel cell keeps plain semantics: free-text → text, option cell → option.
+        -- Numeric/date inputType inside a panel is deferred (treated as plain text).
+        case
+            when tmpl.value ->> 'type' in ('text', 'comment') then 'text'
+            else 'option'
+        end as value_kind,
         cast(null as text) as matrix_name,
         cast(null as text) as matrix_row,
         cast(null as text) as matrix_column,

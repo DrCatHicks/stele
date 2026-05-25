@@ -33,10 +33,15 @@ dbt staging don't all handle — CLAUDE.md §"New question type = three places")
 | `matrix` | grid of single-selects | one `option_key` row per row sub-question (`m.row`) |
 | `matrixdropdown` | grid of typed cells | one `option_key` row per cell sub-question (`m.row.col`); option cells only |
 | `paneldynamic` | repeating group | one sub-question per template element (`panel.element`), repeated per `occurrence`; option + free-text cells |
+| `rating` | scalar | `value_numeric` (the chosen rate value; numeric rate values only) |
+| `boolean` | scalar | `value_numeric` (`1` true / `0` false; no custom `valueTrue`/`valueFalse`) |
+| `text` + `inputType: number`/`range` | scalar numeric | `value_numeric` (not free text → no PII store) |
+| `text` + `inputType: date` | scalar date | `value_date` (parsed from `YYYY-MM-DD`; not free text) |
 
-Rating, boolean, numeric, and date types are **not yet publishable** — they arrive
-in the scalar M5 story alongside their dbt staging and tests. Until then they'd
-land as all-null fact rows, silently indistinguishable from "shown & skipped".
+A plain `text`/`comment` (no numeric/date `inputType`) is free text → `value_text`,
+PII-routed. Scalar types resolve straight to a value column, so they never enter
+the PII store. Numeric/date cells **inside** a matrix or panel are still deferred —
+a panel free-text cell stays `value_text` regardless of `inputType`.
 
 ## The patterns
 
@@ -49,6 +54,7 @@ land as all-null fact rows, silently indistinguishable from "shown & skipped".
 | [matrix.json](matrix.json) | `matrix`; a single-choice grid decomposed into one sub-question per row |
 | [matrixdropdown.json](matrixdropdown.json) | `matrixdropdown`; a typed-cell grid decomposed into one sub-question per (row, column) |
 | [repeating_group.json](repeating_group.json) | `paneldynamic`; an array-of-objects answer where the array position drives the fact `occurrence`; option + per-occurrence free-text cells |
+| [scalar.json](scalar.json) | `rating`/`boolean` and numeric/date `text` inputs; answers landing in `value_numeric`/`value_date` rather than via an `option_key` |
 | [branching.json](branching.json) | `visibleIf` conditional routing, including complementary branches |
 | [multi_page.json](multi_page.json) | multiple pages; a `visibleIf` referencing an answer from an earlier page |
 | [calculated_values.json](calculated_values.json) | a `calculatedValue` as a reusable, named `visibleIf` condition |

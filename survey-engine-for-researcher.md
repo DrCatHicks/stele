@@ -254,8 +254,11 @@ value_date}`. Which one is determined by the question's `value_kind`
 
 ### Pooling across versions
 
-Default `GROUP BY question_id` (or `stable_name`) gives strict per-version behavior —
-the safe default. To pool equivalent questions across versions, opt in with the
+The safe default is to keep versions separate: `GROUP BY survey_version_id, question_id`
+(or just group by `question_version_id`). Grouping by `question_id` / `stable_name`
+alone will pool across versions when a question’s stable name is unchanged.
+
+To pool equivalent questions across versions *despite a rename*, opt in with the
 canonical key (`COALESCE(parent_question_id, question_id)`), having first confirmed
 the recorded equivalence rationale (§4a).
 

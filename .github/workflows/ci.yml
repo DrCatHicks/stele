@@ -203,6 +203,13 @@ jobs:
         run: |
           uv run dbt parse --profiles-dir .
           uv run dbt compile --profiles-dir .
-      - name: dbt build (as stele_etl — runs models + custom invariant tests)
-        working-directory: dbt
-        run: uv run dbt build --profiles-dir .
+      - name: ETL run (the FR-11 command — `dbt build` + ops.etl_runs logging)
+        # Exercise the operational entry point, not a bare `dbt build`: the runner
+        # connects as stele_etl, builds the marts (running the custom invariant
+        # tests), then logs the run to ops.etl_runs and archives the dbt artifacts.
+        # This proves the run-logging grants and the full FR-11 path on a fresh DB,
+        # not just via the dbt-stubbed integration tests. Run from the repo root —
+        # the runner sets the dbt working dir itself and reads git_sha from here.
+        env:
+          STELE_ETL_DATABASE_URL: postgresql://stele_etl:dev@localhost:5432/stele
+        run: uv run python scripts/run_etl.py

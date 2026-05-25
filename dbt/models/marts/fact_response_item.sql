@@ -10,6 +10,13 @@
 --   shown & skipped  : option_key null, was_shown = true
 --   routed past      : option_key null, was_shown = false
 --
+-- The polymorphic value columns are mutually exclusive (invariant 8): a row carries
+-- an option_key (choice / matrix / panel option cell), a value_numeric (rating,
+-- boolean→1/0, numeric `text` inputType — M5.5), a value_date (date `text`), a
+-- value_text (free text), or — for an unanswered routing row — none. value_kind
+-- (carried from int_survey_questions) is the single source of which one; the numeric
+-- and date values are coerced upstream in int_response_selections.
+--
 -- value_text carries free-text answers for pii_risk='low' questions, AND for
 -- high-risk answers a reviewer has individually promoted (design-doc §3.9,
 -- invariant 6). Otherwise high-risk free text is redacted here (value_text null,
@@ -33,10 +40,13 @@ with selections as (
         s.answer_value,
         s.was_shown,
         s.question_type,
+        s.value_kind,
         s.pii_risk,
         s.option_lookup_value,
         s.selection_ordinal,
         s.occurrence,
+        s.value_numeric,
+        s.value_date,
         {{ surrogate_key(['s.survey_id', 's.survey_version']) }} as survey_version_id,
         {{ surrogate_key(['s.stable_name']) }} as question_id,
         {{ surrogate_key(['s.survey_id', 's.survey_version', 's.stable_name']) }} as question_version_id
@@ -81,15 +91,18 @@ fact_response_item_rows as (
         s.question_version_id,
         s.occurrence,
         o.option_key,
-        cast(null as numeric) as value_numeric,
-        cast(null as date) as value_date,
+        -- value_numeric / value_date are coerced in int_response_selections (the
+        -- JSON-confined intermediate); they are non-null only for the matching
+        -- value_kind, so option_key / value_text rows carry null here (M5.5).
+        s.value_numeric,
+        s.value_date,
         case
-            when s.question_type in ('text', 'comment')
+            when s.value_kind = 'text'
                 and (s.pii_risk = 'low' or d.status = 'promoted')
                 then s.answer_value
         end as value_text,
         case
-            when s.question_type in ('text', 'comment')
+            when s.value_kind = 'text'
                 and coalesce(s.pii_risk, 'high') = 'high'
                 and coalesce(d.status, '') != 'promoted'
                 then true

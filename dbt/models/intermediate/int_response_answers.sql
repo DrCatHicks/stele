@@ -45,6 +45,7 @@ questions as (
         survey_version,
         stable_name,
         question_type,
+        value_kind,
         pii_risk,
         matrix_name,
         matrix_row,
@@ -63,6 +64,7 @@ navigated as (
         r.submitted_at,
         q.stable_name,
         q.question_type,
+        q.value_kind,
         q.pii_risk,
         r.payload,
         r.shown_questions,
@@ -122,6 +124,8 @@ select
     -- question_type and pii_risk ride along so fact_response_item can gate
     -- value_text on them (free-text + pii_risk='low') without re-parsing.
     question_type,
+    -- value_kind (M5.5) routes the answer to its value column downstream.
+    value_kind,
     pii_risk,
     -- 1-based panel occurrence; 1 for every non-panel question (invariant 7 grain).
     occurrence,

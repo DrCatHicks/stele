@@ -30,6 +30,7 @@ select
     a.survey_version,
     a.stable_name,
     a.question_type,
+    a.value_kind,
     a.pii_risk,
     -- Panel occurrence (M5.4) rides through to the fact grain; 1 for non-panel.
     -- A panel cell is single-select/free-text, so it never also fans out as a
@@ -42,7 +43,26 @@ select
         when a.question_type in ('checkbox', 'ranking') then sel.value
         else a.answer_value
     end as option_lookup_value,
-    sel.ordinality as selection_ordinal
+    sel.ordinality as selection_ordinal,
+    -- Scalar coercion (M5.5) lives here with the other Postgres-specific answer
+    -- handling, so the marts (fact_response_item) stay portable. A boolean maps
+    -- true/false → 1/0; a rating / numeric `text` casts when the answer is a valid
+    -- number; a date `text` casts a YYYY-MM-DD answer. A malformed value (only
+    -- reachable via the public submit endpoint, never SurveyJS) coerces to null —
+    -- answered stays true but the value column is null, the same conservative
+    -- treatment an unresolved checkbox value gets. value_kind='option'/'text' rows
+    -- (and every fanned-out array selection) carry null in both, so invariant 8
+    -- holds: at most one populated value slot per fact row.
+    case
+        when a.value_kind = 'numeric' and a.question_type = 'boolean'
+            then case a.answer_value when 'true' then 1 when 'false' then 0 end
+        when a.value_kind = 'numeric' and a.answer_value ~ '^-?[0-9]+(\.[0-9]+)?$'
+            then a.answer_value::numeric
+    end as value_numeric,
+    case
+        when a.value_kind = 'date' and a.answer_value ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+            then a.answer_value::date
+    end as value_date
 from {{ ref('int_response_answers') }} as a
 left join lateral jsonb_array_elements_text(
     case

@@ -11,7 +11,11 @@ from typing import Any
 import pytest
 from httpx import AsyncClient
 
-from api.survey_engine.validation import InvalidDefinition, validate_definition
+from api.survey_engine.validation import (
+    InvalidDefinition,
+    extract_free_text_questions,
+    validate_definition,
+)
 
 
 def _def(*elements: dict[str, Any]) -> dict[str, Any]:
@@ -48,14 +52,12 @@ def test_unsupported_question_type_rejected() -> None:
         validate_definition(_def({"type": "signaturepad", "name": "sig"}))
 
 
-def test_not_yet_wired_types_rejected() -> None:
-    # boolean, rating land in the scalar M5 story with their dbt staging;
-    # publishing one today would silently drop the answer in the warehouse.
-    # (checkbox, ranking, matrix, matrixdropdown and paneldynamic are now wired —
-    # see the type-specific tests below.)
-    for qtype in ("boolean", "rating"):
+def test_still_unwired_types_rejected() -> None:
+    # Types with no dbt staging yet are still rejected (CLAUDE.md "three places").
+    # rating/boolean/numeric+date text are now wired — see the scalar tests below.
+    for qtype in ("signaturepad", "imagepicker", "file", "multipletext"):
         with pytest.raises(InvalidDefinition, match="unsupported type"):
-            validate_definition(_def({"type": qtype, "name": "q1", "choices": ["a", "b"]}))
+            validate_definition(_def({"type": qtype, "name": "q1"}))
 
 
 def test_multi_select_passes() -> None:
@@ -460,6 +462,63 @@ def test_matrixdropdown_column_dangling_visible_if_rejected() -> None:
     )
     with pytest.raises(InvalidDefinition, match="references unknown question 'ghost'"):
         validate_definition(definition)
+
+
+# --- scalar types: rating / boolean / numeric+date text (M5.5) ---------------
+
+
+def test_rating_passes() -> None:
+    validate_definition(_def({"type": "rating", "name": "score", "rateMax": 5}))
+
+
+def test_rating_numeric_rate_values_pass() -> None:
+    validate_definition(_def({"type": "rating", "name": "score", "rateValues": [1, 2, 3]}))
+
+
+def test_rating_text_rate_values_rejected() -> None:
+    # Text-valued ratings would need option-key treatment; rejected for now so the
+    # answer can't land as a null value_numeric.
+    with pytest.raises(InvalidDefinition, match="numeric rateValues only"):
+        validate_definition(
+            _def({"type": "rating", "name": "score", "rateValues": ["low", "high"]})
+        )
+
+
+def test_boolean_passes() -> None:
+    validate_definition(_def({"type": "boolean", "name": "agree"}))
+
+
+def test_boolean_custom_value_rejected() -> None:
+    # A custom valueTrue stores a non-true/false scalar, breaking the 1/0 mapping.
+    with pytest.raises(InvalidDefinition, match="custom boolean 'valueTrue'"):
+        validate_definition(_def({"type": "boolean", "name": "agree", "valueTrue": "yes"}))
+
+
+def test_numeric_and_date_text_inputs_pass() -> None:
+    validate_definition(
+        _def(
+            {"type": "text", "name": "age", "inputType": "number"},
+            {"type": "text", "name": "joined", "inputType": "date"},
+        )
+    )
+
+
+def test_numeric_date_text_excluded_from_free_text_pii() -> None:
+    # A numeric/date text input is NOT free text → no PII row, no rationale needed.
+    # Only the plain comment is treated as free text.
+    definition = _def(
+        {"type": "text", "name": "age", "inputType": "number"},
+        {"type": "text", "name": "joined", "inputType": "date"},
+        {"type": "comment", "name": "feedback"},
+    )
+    names = {q.name for q in extract_free_text_questions(definition)}
+    assert names == {"feedback"}
+
+
+def test_numeric_text_input_skips_low_risk_rationale_requirement() -> None:
+    # Because it's excluded from the free-text gate, a numeric input with no
+    # pii_risk/rationale publishes — a plain low-risk comment without one would not.
+    validate_definition(_def({"type": "text", "name": "age", "inputType": "number"}))
 
 
 def test_nameless_display_element_ignored() -> None:

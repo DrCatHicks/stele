@@ -70,6 +70,24 @@ MATRIX_CELL_TYPES = frozenset({"dropdown", "radiogroup"})
 # uniformly with a plain one (design-doc §3.5, FR-4 "repeating groups").
 REPEATING_TYPES = frozenset({"paneldynamic"})
 
+# Scalar types (M5.5). A single answer that lands in the polymorphic value columns
+# rather than via an option_key join: `rating` → value_numeric, `boolean` →
+# value_numeric (0/1). numeric/date answers are NOT distinct SurveyJS types — they
+# are a `text` question with a numeric/date `inputType` (see *_INPUT_TYPES below),
+# routed to value_numeric / value_date downstream. dbt's value_kind classification
+# (int_survey_questions) is the single source of which value column each question
+# feeds; this module only gates publishability + the per-type lint.
+SCALAR_TYPES = frozenset({"rating", "boolean"})
+
+# A `text` question's `inputType` decides which value column it feeds (M5.5). These
+# bypass the free-text/PII path entirely — a number or a calendar date is not
+# identifying free text — and route to value_numeric / value_date. Any other
+# inputType (or none) leaves a text/comment question as free text → value_text.
+# Applied at the TOP LEVEL only: a panel/matrix cell keeps its plain type semantics
+# (option_key or value_text), so numeric/date cells inside those stay deferred.
+NUMERIC_INPUT_TYPES = frozenset({"number", "range"})
+DATE_INPUT_TYPES = frozenset({"date"})
+
 # Template-element (panel cell) types we support end-to-end: single-select choices
 # (→ option_key, per occurrence) and free-text (→ value_text / PII store, per
 # occurrence). Multi-select / ranked / scalar / matrix / nested-panel cells need
@@ -81,13 +99,14 @@ PANEL_CELL_TYPES = CHOICE_TYPES | FREE_TEXT_TYPES
 # Question types we support end-to-end enough to publish. A name-bearing element
 # of any other type is rejected — you can't publish a type the runtime, gate and
 # dbt staging don't all handle (CLAUDE.md §"New question type = three places").
-# Still narrow by design: fact_response_item populates option_key (single/multi/
-# ranked choice + matrix cell + panel option cell) and value_text (free-text, incl.
-# panel free-text cells); value_numeric/value_date stay unpopulated, so
-# rating/numeric/date answers would land as all-null fact rows — silently dropped
-# and indistinguishable from "shown & skipped". Those rejoin here in the scalar M5
-# story alongside their dbt staging + tests.
-KNOWN_QUESTION_TYPES = FREE_TEXT_TYPES | OPTION_TYPES | MATRIX_TYPES | REPEATING_TYPES
+# fact_response_item populates option_key (single/multi/ranked choice + matrix cell
+# + panel option cell), value_text (free-text, incl. panel free-text cells), and —
+# since M5.5 — value_numeric (rating, boolean, numeric `text`) / value_date (date
+# `text`). A name-bearing element of any other type is rejected (CLAUDE.md §"New
+# question type = three places").
+KNOWN_QUESTION_TYPES = (
+    FREE_TEXT_TYPES | OPTION_TYPES | MATRIX_TYPES | REPEATING_TYPES | SCALAR_TYPES
+)
 
 # SurveyJS context variables that may appear as `{base...}` inside an expression
 # without being a question name (dynamic panels/matrix rows, self-reference). A
@@ -154,6 +173,13 @@ def _panel_template_elements(element: dict[str, Any]) -> Iterator[dict[str, Any]
             yield tmpl
 
 
+def _is_scalar_text(element: dict[str, Any]) -> bool:
+    """A text/comment element whose `inputType` routes it to value_numeric/value_date
+    (M5.5), so it is NOT free text. Mirrors dbt's value_kind classification: only a
+    numeric/date inputType diverts a text question off the value_text/PII path."""
+    return element.get("inputType") in (NUMERIC_INPUT_TYPES | DATE_INPUT_TYPES)
+
+
 def extract_free_text_questions(definition: dict[str, Any]) -> list[FreeTextQuestion]:
     """Free-text questions (SurveyJS text/comment) with their pii_risk tagging.
 
@@ -165,7 +191,10 @@ def extract_free_text_questions(definition: dict[str, Any]) -> list[FreeTextQues
     questions: list[FreeTextQuestion] = []
     for element in _iter_elements(definition):
         etype = element.get("type")
-        if etype in FREE_TEXT_TYPES and element.get("name"):
+        if etype in FREE_TEXT_TYPES and element.get("name") and not _is_scalar_text(element):
+            # A numeric/date `text` input (M5.5) is not free text — it routes to
+            # value_numeric/value_date and never touches the PII store, so it is
+            # excluded here (else a PII row would be orphaned with no marts value).
             questions.append(
                 FreeTextQuestion(
                     name=element["name"],
@@ -274,6 +303,10 @@ def _validate_questions(definition: dict[str, Any]) -> set[str]:
             # question named "panel.element" would hash to the same question_id).
             for sub_name in _validate_paneldynamic(name, element):
                 _claim_subquestion_name(names, name, sub_name, "panel")
+        elif qtype in SCALAR_TYPES:
+            _validate_scalar(name, element)
+        # FREE_TEXT_TYPES need no per-type lint here (PII is gated separately); a
+        # numeric/date `text` inputType only changes which value column it feeds.
     return names
 
 
@@ -424,6 +457,44 @@ def _validate_paneldynamic(name: str, element: dict[str, Any]) -> list[str]:
             _validate_choices(f"{name}.{element_name}", tmpl.get("choices"))
         sub_names.append(f"{name}.{element_name}")
     return sub_names
+
+
+def _validate_scalar(name: str, element: dict[str, Any]) -> None:
+    """Lint a scalar question (M5.5). Both resolve to value_numeric downstream:
+
+    - `rating` → the chosen rate value, cast to numeric. We support *numeric* rate
+      values only (the default 1..N, or numeric `rateValues`); a text-valued rating
+      ("Low"/"High") would need option-key treatment and is rejected so the answer
+      can't land as a null value_numeric (deferred — see MATRIX_CELL_TYPES for the
+      same scoping pattern).
+    - `boolean` → 1/0 from native true/false. A custom `valueTrue`/`valueFalse`
+      stores some other scalar in the payload, breaking that mapping, so it is
+      rejected here rather than silently dropped.
+    """
+    if element.get("type") == "rating":
+        rate_values = element.get("rateValues")
+        if isinstance(rate_values, list):
+            for rate in rate_values:
+                value = _choice_value(rate)
+                if value is not None and not _is_numeric(value):
+                    raise InvalidDefinition(
+                        f"question {name!r}: rating supports numeric rateValues only, "
+                        f"got {value!r} (text-valued ratings are not yet wired)"
+                    )
+        return
+    # boolean
+    for key in ("valueTrue", "valueFalse"):
+        if key in element:
+            raise InvalidDefinition(
+                f"question {name!r}: custom boolean {key!r} is not supported "
+                "(stores a non-true/false value; not yet wired)"
+            )
+
+
+def _is_numeric(value: str) -> bool:
+    # Matches the numeric coercion dbt's int_response_selections applies (a signed
+    # integer or decimal); keeps the publish-time check in step with the warehouse.
+    return re.fullmatch(r"-?[0-9]+(\.[0-9]+)?", value) is not None
 
 
 def _calculated_value_names(definition: dict[str, Any]) -> set[str]:

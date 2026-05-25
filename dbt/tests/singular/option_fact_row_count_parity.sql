@@ -14,8 +14,11 @@
 with raw_selections as (
     select count(*) as n
     from {{ ref('int_response_selections') }}
+    -- value_kind = 'option' is exactly the option-bearing selections: it excludes
+    -- free text (value_text) AND scalars (value_numeric/value_date, M5.5), all of
+    -- which carry a non-null option_lookup_value but never resolve to an option_key.
     where option_lookup_value is not null
-        and question_type not in ('text', 'comment')
+        and value_kind = 'option'
 ),
 
 fact_selections as (

@@ -18,6 +18,10 @@ Questions:
   q7       paneldynamic (repeating group) → one sub-question per template element
            (q7.kind option cell, q7.nickname high-risk free-text cell), repeated
            per occurrence: the panel array position drives the fact `occurrence`
+  q8       rating → value_numeric (the chosen rate value)
+  q9       boolean → value_numeric (1=true / 0=false)
+  q10      numeric text (inputType number) → value_numeric (not free text → no PII)
+  q11      date text (inputType date) → value_date
   ft_low   free-text, pii_risk='low'  → value reaches marts.value_text
   ft_high  free-text, pii_risk='high' → redacted in marts; copied to
            pii.free_text_responses for the reviewer
@@ -28,12 +32,13 @@ response surfaces value_text in the marts while the rest stay redacted. q7's
 high-risk panel cell (q7.nickname) stays redacted — exercising a per-occurrence
 PII copy (one pii.free_text_responses row per occurrence) that is NOT promoted.
 
-Expected marts after `dbt build` (printed at the end for the runbook):
-  dim_respondent: 4 · dim_survey_version: 1 · dim_question: 12
-  dim_question_version: 12 · dim_option: 22
-  fact_response_item: 55 (24 with an option_key · 4 with value_text · 8 redacted
-                          · 6 with a rank)
-  fact_response: 50 · pii.free_text_responses: 4 · pii.free_text_review_decisions: 1
+Expected marts after `dbt build` on a FRESH single-survey DB (CI seeds one; the
+local dev DB accumulates every prior seed, so scope queries to the newest survey):
+  dim_respondent: 4 · dim_survey_version: 1 · dim_question: 16
+  dim_question_version: 16 · dim_option: 22
+  fact_response_item: 71 (24 with an option_key · 4 with value_text · 6 with
+                          value_numeric · 2 with value_date · 8 redacted · 6 rank)
+  fact_response: 66 · pii.free_text_responses: 4 · pii.free_text_review_decisions: 1
   q1 selections — a:2  b:1  c:1     q2 selections — x:1  y:1
   q3 selections — red:1  green:1  blue:1   (R1 picked red+blue, R2 picked green)
   q4 ranks — R1: quality>speed>cost   R2: cost>quality>speed
@@ -42,6 +47,13 @@ Expected marts after `dbt build` (printed at the end for the runbook):
   q6.laptop.brand — apple:1 (R1) dell:1 (R2)   q6.laptop.os — mac:1 (R1; R2 left blank)
   q7.kind — phone:1 (R1 occ1) laptop:1 (R1 occ2) tablet:1 (R2 occ1)
   q7.nickname — 2 high-risk PII copies (R1 occ1+occ2), redacted in marts
+  q8 (rating) value_numeric — 5 (R1)  3 (R2)     q9 (boolean) — 1 (R1 true) 0 (R2 false)
+  q10 (numeric text) value_numeric — 42 (R1) 29 (R2)   q11 (date text) value_date — R1,R2
+  (q10/q11 are NOT free text — no pii.free_text_responses rows for them)
+
+On the local polluted dev DB the reviewer promotion lands on the globally-first
+ft_high (an older survey's row), so the newest survey reads value_text 3 / redacted
+9; CI's fresh DB promotes R1's ft_high → value_text 4 / redacted 8 (above).
 """
 
 from __future__ import annotations
@@ -135,6 +147,35 @@ DEFINITION: dict[str, Any] = {
                     ],
                 },
                 {
+                    "type": "rating",
+                    "name": "q8",
+                    "title": "How satisfied are you?",
+                    # Scalar (M5.5): the chosen rate value → value_numeric.
+                    "rateMin": 1,
+                    "rateMax": 5,
+                },
+                {
+                    "type": "boolean",
+                    "name": "q9",
+                    "title": "Would you recommend us?",
+                    # Scalar (M5.5): true → value_numeric 1, false → 0.
+                },
+                {
+                    "type": "text",
+                    "name": "q10",
+                    "title": "How old are you?",
+                    # Scalar (M5.5): a numeric text input → value_numeric, NOT free
+                    # text — so it never enters the PII store.
+                    "inputType": "number",
+                },
+                {
+                    "type": "text",
+                    "name": "q11",
+                    "title": "When did you start?",
+                    # Scalar (M5.5): a date text input → value_date.
+                    "inputType": "date",
+                },
+                {
                     "type": "comment",
                     "name": "ft_low",
                     "title": "Anything to add? (non-identifying)",
@@ -164,15 +205,19 @@ DEFINITION: dict[str, Any] = {
 # name (q5/q6/q7), not the sub-questions, mirroring the SurveyJS engine. An
 # empty/absent array, a row absent from the matrix object, or a cell key absent from
 # a panel occurrence object, is a routing row:
+# q8-q11 (M5.5 scalars) land in value_numeric (q8 rating, q9 boolean 1/0, q10
+# numeric text) and value_date (q11 date text); an absent payload key is a routing
+# row, exactly like the other types. R2's q9=false exercises value_numeric 0
+# (answered, not skipped):
 #   R1: all shown+answered; q5's "price" row blank (shown-skipped cell); q7 has 2
 #       occurrences (one panel cell, q7.nickname, present both times)
 #   R2: all shown+answered; q6's "os" cell blank; q7 has 1 occurrence with nickname
-#       left blank (shown-skipped panel cell at occurrence 1)
-#   R3: q2/q3/q4/q5/q6/q7/ft_high shown but skipped; q1 + ft_low answered
+#       left blank (shown-skipped panel cell at occurrence 1); q9=false → numeric 0
+#   R3: q2..q11 + ft_high shown but skipped; q1 + ft_low answered
 #   R4: only q1 shown/answered; everything else routed past
 SUBMISSIONS: list[tuple[list[str], dict[str, Any]]] = [
     (
-        ["q1", "q2", "q3", "q4", "q5", "q6", "q7", "ft_low", "ft_high"],
+        ["q1", "q2", "q3", "q4", "q5", "q6", "q7", "q8", "q9", "q10", "q11", "ft_low", "ft_high"],
         {
             "q1": "a",
             "q2": "x",
@@ -184,12 +229,16 @@ SUBMISSIONS: list[tuple[list[str], dict[str, Any]]] = [
                 {"kind": "phone", "nickname": "my work phone"},
                 {"kind": "laptop", "nickname": "the big one"},
             ],
+            "q8": 5,
+            "q9": True,
+            "q10": 42,
+            "q11": "2020-03-15",
             "ft_low": "great",
             "ft_high": "I lead the platform team",
         },
     ),
     (
-        ["q1", "q2", "q3", "q4", "q5", "q6", "q7", "ft_low", "ft_high"],
+        ["q1", "q2", "q3", "q4", "q5", "q6", "q7", "q8", "q9", "q10", "q11", "ft_low", "ft_high"],
         {
             "q1": "b",
             "q2": "y",
@@ -198,12 +247,16 @@ SUBMISSIONS: list[tuple[list[str], dict[str, Any]]] = [
             "q5": {"taste": "bad", "price": "good"},
             "q6": {"laptop": {"brand": "dell"}},
             "q7": [{"kind": "tablet"}],
+            "q8": 3,
+            "q9": False,  # boolean false → value_numeric 0 (distinct from skipped)
+            "q10": 29,
+            "q11": "2019-07-01",
             "ft_low": "good",
             "ft_high": "Senior engineer at Acme",
         },
     ),
     (
-        ["q1", "q2", "q3", "q4", "q5", "q6", "q7", "ft_low", "ft_high"],
+        ["q1", "q2", "q3", "q4", "q5", "q6", "q7", "q8", "q9", "q10", "q11", "ft_low", "ft_high"],
         {"q1": "a", "ft_low": "ok"},
     ),
     (["q1"], {"q1": "c"}),

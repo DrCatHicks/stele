@@ -139,9 +139,8 @@ friction that makes you confirm the pooling is appropriate.
 What the system refuses: auto-pooling from prompt similarity. That would absorb your
 judgment into a default and produce silently inconsistent longitudinal series.
 
-> Status: the columns and the integrity guard (rationale required, parent must
-> pre-date the child) ship today; they are empty until you populate them. The
-> ergonomic tooling around declaring equivalence is the natural next build —
+> Status: the integrity guard ships today (dbt’s `parent_question_integrity` test), but there isn’t yet a supported workflow to *persist* equivalence decisions — `dim_question` emits these columns as nulls.
+> The ergonomic tooling + storage around declaring equivalence is the natural next build —
 > nothing collected needs to change for it to arrive later.
 
 ### b. Free text is treated as sensitive by default

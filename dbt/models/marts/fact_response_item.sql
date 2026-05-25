@@ -48,7 +48,9 @@ with selections as (
         s.value_numeric,
         s.value_date,
         {{ surrogate_key(['s.survey_id', 's.survey_version']) }} as survey_version_id,
-        {{ surrogate_key(['s.stable_name']) }} as question_id,
+        -- Survey-scoped, matching dim_question (invariant 5: a stable_name-only key
+        -- silently pooled same-named questions across unrelated surveys).
+        {{ surrogate_key(['s.survey_id', 's.stable_name']) }} as question_id,
         {{ surrogate_key(['s.survey_id', 's.survey_version', 's.stable_name']) }} as question_version_id
     from {{ ref('int_response_selections') }} as s
 ),

@@ -29,7 +29,7 @@ answers as (
         a.respondent_id,
         a.occurrence,
         {{ surrogate_key(['a.survey_id', 'a.survey_version']) }} as survey_version_id,
-        {{ surrogate_key(['a.stable_name']) }} as question_id,
+        {{ surrogate_key(['a.survey_id', 'a.stable_name']) }} as question_id,
         a.value_kind,
         coalesce(a.pii_risk, 'high') as effective_risk,
         a.answered,

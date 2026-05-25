@@ -3,7 +3,10 @@
 
 select distinct
     {{ surrogate_key(['survey_id', 'survey_version', 'stable_name']) }} as question_version_id,
-    {{ surrogate_key(['stable_name']) }} as question_id,
+    -- Survey-scoped (not stable_name alone): the stable question within one survey,
+    -- pooling its versions but never colliding with another survey's same-named
+    -- question (invariant 5). Matches dim_question.question_id.
+    {{ surrogate_key(['survey_id', 'stable_name']) }} as question_id,
     prompt_text,
     question_type as response_type,
     -- Which polymorphic value column this question's answer lands in (M5.5):

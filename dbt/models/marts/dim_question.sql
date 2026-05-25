@@ -1,13 +1,20 @@
--- Stable question dimension: one row per stable_name across all versions. The
--- question_id is keyed on stable_name only, so it pools versions of the same
--- question under one id (per-version detail lives in dim_question_version).
+-- Stable question dimension: one row per (survey_id, stable_name). question_id is
+-- keyed on survey_id + stable_name, so it pools a question across VERSIONS of one
+-- survey (same name across v1/v2 = the same question; per-version detail lives in
+-- dim_question_version), but NEVER across different surveys. Keying on stable_name
+-- alone silently merged unrelated questions that happened to share a name (e.g.
+-- two surveys' "q1") into one id — silent cross-survey pooling, invariant 5.
+-- survey_id is constant across a survey's versions, so it's a clean attribute of
+-- this grain. Cross-rename / cross-instrument pooling, when genuinely wanted, is
+-- the explicit parent_question_id opt-in below.
 --
 -- parent_question_id / parent_question_rationale capture cross-version
 -- equivalence. They are NEVER auto-populated (invariant 5) — that is a
 -- researcher judgment — so both are emitted as explicit nulls here.
 
 select
-    {{ surrogate_key(['stable_name']) }} as question_id,
+    {{ surrogate_key(['survey_id', 'stable_name']) }} as question_id,
+    survey_id,
     stable_name,
     min(question_type) as question_type,
     -- Pooled PII-risk for the stable question. min() resolves to 'high' if any
@@ -28,4 +35,4 @@ select
     cast(null as text) as parent_question_id,
     cast(null as text) as parent_question_rationale
 from {{ ref('int_survey_questions') }}
-group by stable_name
+group by survey_id, stable_name

@@ -144,3 +144,40 @@ def test_execute_run_failure_records_failed_with_null_marts(
     assert status == "failed"
     assert mart_counts is None  # a failed build's marts are not a trustworthy snapshot
     assert completed_at is not None
+
+
+@requires_db
+def test_execute_run_resolves_row_when_dbt_build_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A raised step (e.g. a missing dbt binary) must not leave a stuck 'running'
+    row: the run is marked failed before the exception propagates."""
+    monkeypatch.setattr(runner, "DBT_DIR", tmp_path)
+    monkeypatch.setattr(runner, "ARTIFACTS_DIR", tmp_path / "etl_artifacts")
+
+    run_ids: list[uuid.UUID] = []
+    original = runner.record_run_start
+
+    def _capture(conn, run_id, *args):  # type: ignore[no-untyped-def]
+        run_ids.append(run_id)
+        return original(conn, run_id, *args)
+
+    monkeypatch.setattr(runner, "record_run_start", _capture)
+
+    def _raise(_extra: list[str] | None) -> int:
+        raise FileNotFoundError("dbt not on PATH")
+
+    with psycopg.connect(runner.resolve_conninfo()) as conn:
+        with pytest.raises(FileNotFoundError):
+            runner.execute_run(conn, dbt_build=_raise, sources=["app.raw_responses"])
+
+        assert run_ids  # the 'running' row was inserted
+        row = conn.execute(
+            "SELECT status, completed_at FROM ops.etl_runs WHERE run_id = %s",
+            (run_ids[0],),
+        ).fetchone()
+
+    assert row is not None
+    status, completed_at = row
+    assert status == "failed"  # resolved, not stuck at 'running'
+    assert completed_at is not None

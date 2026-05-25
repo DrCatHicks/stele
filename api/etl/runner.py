@@ -244,17 +244,31 @@ def execute_run(
 
     record_run_start(conn, run_id, read_source_counts(conn, sources), dbt_version(), git_sha())
 
-    returncode = dbt_build(extra_args)
-    artifacts_dir = archive_artifacts(run_id)
-
-    if returncode == 0:
-        record_run_finish(conn, run_id, "success", read_mart_counts(conn))
-        status = "success"
-    else:
-        # Leave mart_row_counts null: a failed build's marts are not a trustworthy
-        # snapshot. status='failed' + the archived run_results.json tell the story.
-        record_run_finish(conn, run_id, "failed", None)
-        status = "failed"
+    # Anything after the committed 'running' row must resolve the row — a nonzero
+    # dbt exit *or* a raised exception (missing dbt binary, a count error). Without
+    # this, an exception would leave the row stuck at 'running' forever,
+    # indistinguishable from a live run (CLAUDE.md: don't fail silently).
+    try:
+        returncode = dbt_build(extra_args)
+        artifacts_dir = archive_artifacts(run_id)
+        if returncode == 0:
+            record_run_finish(conn, run_id, "success", read_mart_counts(conn))
+            status = "success"
+        else:
+            # Leave mart_row_counts null: a failed build's marts are not a
+            # trustworthy snapshot. status='failed' + the archived run_results.json
+            # tell the story.
+            record_run_finish(conn, run_id, "failed", None)
+            status = "failed"
+    except Exception:
+        # Best-effort: mark the run failed, then let the original error propagate.
+        # A failed count/build may have left the txn aborted, so roll back first.
+        try:
+            conn.rollback()
+            record_run_finish(conn, run_id, "failed", None)
+        except psycopg.Error:
+            pass  # don't mask the original failure with a cleanup error
+        raise
 
     return RunResult(run_id, status, returncode, artifacts_dir)
 

@@ -1,6 +1,8 @@
-// Relative URLs; the Vite dev server proxies /surveys and /auth to the API
-// (vite.config.ts). Cookies (the auth session) ride same-origin automatically.
-const API_BASE = '';
+// All API routes live under /api (the backend mounts the API app there; see
+// api/main.py). In dev, Vite proxies /api to FastAPI; in prod the same FastAPI
+// process serves both /api and this SPA from one origin, so the auth session
+// cookie rides along same-origin with no CORS.
+const API_BASE = '/api';
 
 export interface SurveyDetail {
   survey_id: string;

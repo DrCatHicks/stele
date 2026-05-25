@@ -126,15 +126,18 @@ safe choice and leaves the meaningful one to you.
 
 Whether a reworded question in version 2 measures the *same construct* as its
 version-1 predecessor is a methodological judgment, not something the system can
-infer from name or text similarity. So by default it doesn't: each version's
-question stands alone, and a naive analysis groups strictly within a version.
+infer from name or text similarity. The system will not infer equivalence across
+*different* question identities.
 
-When you *do* judge two versions equivalent, you say so explicitly — you record a
-`parent_question_id` link **and a written rationale** for why they pool (FR-9). The
-rationale is required; the system rejects the link without it. Pooling analyses then
-opt in by using the derived canonical key
-(`COALESCE(parent_question_id, question_id)`), and that opt-in is the moment of
-friction that makes you confirm the pooling is appropriate.
+In the warehouse, `question_id` is stable across versions **when the question’s
+`stable_name` is unchanged**. To keep versions separate (the safe default), group
+by `question_version_id` (or by both `survey_version_id` + `question_id`).
+
+When you *do* judge two versions equivalent *despite a rename*, you say so
+explicitly — you record a `parent_question_id` link **and a written rationale**
+for why they pool (FR-9). The rationale is required; the system rejects the link
+without it. Pooling analyses then opt in by using the derived canonical key
+(`COALESCE(parent_question_id, question_id)`).
 
 What the system refuses: auto-pooling from prompt similarity. That would absorb your
 judgment into a default and produce silently inconsistent longitudinal series.

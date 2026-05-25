@@ -3,13 +3,18 @@
 **Status:** Living — reconciled with the as-built system (M0–M6 complete)
 **Author:** *(to fill)*
 **Last updated:** 2026-05-25
-**Version:** 2
+**Version:** 3
 
 > This is the maintained design document. The original pre-build design — plus the
 > incremental syncs made during M0–M6 — is frozen at
 > [`docs/design/archive/survey-engine-design-doc.v1.md`](docs/design/archive/survey-engine-design-doc.v1.md).
 
 ### Changelog
+
+**v3 (2026-05-25)** — corrected the cross-version equivalence model (§3.5, §6) after an audit found the warehouse keyed `question_id` on `stable_name` alone:
+
+- **Bug fixed in the build:** `question_id` now keys on `(survey_id, stable_name)`, not `stable_name` alone. The old key silently pooled any questions sharing a name — across versions *and across unrelated surveys* (two surveys' `q1` collapsed into one id) — violating invariant 5. `dim_question` gains a `survey_id` column; a `question_id_survey_scoped` test pins the key.
+- **§3.5 / §6** — corrected the claim that `GROUP BY question_id` gives "strict per-version" behavior (it pools a survey's versions of a same-named question; strict per-version is `GROUP BY question_version_id`). Documented the survey-scoped identity and what it does/doesn't bridge (versions yes by name, renames/instruments only via the opt-in `canonical_question_id`).
 
 **v2 (2026-05-25)** — reconciled the document with the system as actually built across milestones M0–M6. The architecture held; the changes are factual corrections where the build added detail the original design left open:
 
@@ -275,6 +280,7 @@ erDiagram
     }
     dim_question {
         bigint question_id PK
+        uuid survey_id
         text stable_name
         text question_type
         bigint parent_question_id FK
@@ -327,9 +333,12 @@ Which column a question feeds is decided by a `value_kind` classification (`opti
 
 #### Cross-version equivalence
 
-Questions are not treated as equivalent across versions by default. Each `dim_question_version` is its own thing; naive `GROUP BY question_id` gives strict per-version behavior.
+Question identity is **survey-scoped**: `question_id` is keyed on `(survey_id, stable_name)`. Two consequences:
 
-For explicit equivalence judgments, `dim_question` carries two nullable columns:
+- **Within one survey**, a question keeps the same `question_id` across versions as long as its `stable_name` is unchanged — keeping the name *is* the continuity assertion. `GROUP BY question_id` pools that question across the survey's versions; the per-version rendering (prompt wording, etc.) lives in `dim_question_version`, and `GROUP BY question_version_id` gives strict per-version behavior.
+- **Across surveys**, identity never pools: two surveys whose questions happen to share a name (a generic `q1`) get distinct `question_id`s. Keying on `stable_name` alone — the original design — silently merged those unrelated questions into one id (and would do the same for a renamed question's predecessor); that silent cross-survey pooling violated invariant 5 and was corrected to the `(survey_id, stable_name)` key.
+
+What `question_id` does **not** bridge is a **rename** (or a deliberate cross-instrument equivalence): a new `stable_name` is a new `question_id`, kept separate by default. Declaring a renamed item a continuation is the explicit, opt-in judgment. For it, `dim_question` carries two nullable columns:
 
 | Column | Notes |
 |---|---|
@@ -346,7 +355,7 @@ The canonical pooling key for cross-version analysis is:
 COALESCE(parent_question_id, question_id) AS canonical_question_id
 ```
 
-Analysts wanting strict per-version behavior ignore the columns. Analysts wanting to pool must opt in by using `canonical_question_id`, which is the moment of friction that prompts them to check the rationale and confirm pooling is appropriate.
+Analysts wanting strict per-version behavior group by `question_version_id`; same-named questions already share a `question_id` across a survey's versions. To *additionally* pool across a rename (or a cross-instrument equivalence), opt in by using `canonical_question_id` — the moment of friction that prompts checking the rationale and confirming pooling is appropriate.
 
 #### Indexes
 
@@ -541,6 +550,7 @@ These are reopened when explicit triggers are met, not on a schedule.
 | SurveyJS Creator license | Non-technical authoring patterns the LLM-assisted JSON workflow doesn't serve well. |
 | Full routing-trace dimension | Research questions requiring reconstruction of the decision graph beyond what `was_shown` + raw `shown_questions` arrays support. (Backfillable without re-collection.) |
 | Automated PII detection as first pass on free-text | Free-text volume exceeding reviewer capacity. |
+| Org/delivery dimension | One survey (instrument) delivered to multiple organizations/cohorts that must be analyzable independently *and* pooled. Likely an attribute on `dim_respondent` (the respondent's org) — orthogonal to question identity, so analyses filter by org for "independently" and omit it for "altogether," while the survey-scoped `question_id` keeps pooling correct. Triggered when a survey is first delivered to more than one org. |
 
 ---
 
@@ -550,7 +560,8 @@ These are reopened when explicit triggers are met, not on a schedule.
 |---|---|
 | Survey definition drift between client and stored hash | API validates submitted `survey_version` matches a known published hash; rejects otherwise. |
 | Question rename treated as same question | Stable `question_id` established at first publication and never reused; renames surfaced in lint. |
-| Analyst silently pools questions across versions that aren't equivalent | Pooling requires explicit `canonical_question_id`; default `GROUP BY question_id` gives strict per-version behavior. |
+| Analyst silently pools questions across versions/surveys that aren't equivalent | `question_id` is survey-scoped `(survey_id, stable_name)`, so it never pools across surveys; `GROUP BY question_version_id` is strict per-version; pooling across a rename requires the explicit `canonical_question_id` opt-in. |
+| Reworded item silently treated as the same question because its name was kept | Within a survey, keeping `stable_name` across versions *is* the continuity assertion (per-version wording is preserved in `dim_question_version`); a genuine construct change should be a rename, which breaks `question_id` and forces the explicit equivalence opt-in. |
 | LLM-generated JSON with subtle logic errors | Round-trip test gate at publish time; pattern library reduces invention surface. |
 | Two parsers (API and dbt) drift apart over time | dbt reads from `raw_responses` only; normalized tables are a read-model, not an ETL input. |
 | Analyst confuses "selection count" with "respondent count" | Companion `fact_response` table at respondent-question grain; documented in marts; default examples use `COUNT(DISTINCT respondent_id)`. |

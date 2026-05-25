@@ -20,6 +20,14 @@ models:
     columns:
       - name: question_id
         data_tests: [unique, not_null]
+      - name: survey_id
+        description: >
+          The survey (instrument) this question belongs to. Part of the
+          dim_question grain: question_id is keyed on (survey_id, stable_name), so
+          a question pools across a survey's versions but never across surveys
+          (invariant 5 — no silent cross-survey pooling). The question_id_survey_scoped
+          singular test pins question_id to this key.
+        data_tests: [not_null]
       - name: matrix_name
         description: >
           For a matrix cell sub-question (M5.3), the matrix element's own name —

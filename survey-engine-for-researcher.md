@@ -122,21 +122,26 @@ These are the judgments the system will never make for you. Each one is a place
 where a "helpful" default would quietly corrupt an analysis, so the system makes the
 safe choice and leaves the meaningful one to you.
 
-### a. Versions are not pooled across revisions by default
+### a. The system never infers question equivalence
 
 Whether a reworded question in version 2 measures the *same construct* as its
 version-1 predecessor is a methodological judgment, not something the system can
-infer from name or text similarity. The system will not infer equivalence across
-*different* question identities.
+infer from name or text similarity. It will not equate questions of *different*
+identity on its own.
 
-In the warehouse, `question_id` is stable across versions **when the question’s
-`stable_name` is unchanged**. To keep versions separate (the safe default), group
-by `question_version_id` (or by both `survey_version_id` + `question_id`).
+In the warehouse, `question_id` identifies a question **within one survey** — it is
+keyed on `(survey_id, stable_name)`. So it pools that question across the survey's
+versions *when you keep the name unchanged* (keeping the name is itself your
+assertion of continuity; the per-version wording is preserved in
+`dim_question_version`), but it **never** pools across different surveys — two
+surveys that both have a `q1` stay distinct. To keep *versions* separate, group by
+`question_version_id`.
 
-When you *do* judge two versions equivalent *despite a rename*, you say so
-explicitly — you record a `parent_question_id` link **and a written rationale**
-for why they pool (FR-9). The rationale is required; the system rejects the link
-without it. Pooling analyses then opt in by using the derived canonical key
+When you *do* judge two questions of different identity equivalent — a rename across
+versions, or the same instrument reused elsewhere — you say so explicitly: you
+record a `parent_question_id` link **and a written rationale** for why they pool
+(FR-9). The rationale is required; the system rejects the link without it. Pooling
+analyses then opt in by using the derived canonical key
 (`COALESCE(parent_question_id, question_id)`).
 
 What the system refuses: auto-pooling from prompt similarity. That would absorb your
@@ -257,13 +262,15 @@ value_date}`. Which one is determined by the question's `value_kind`
 
 ### Pooling across versions
 
-The safe default is to keep versions separate: `GROUP BY survey_version_id, question_id`
-(or just group by `question_version_id`). Grouping by `question_id` / `stable_name`
-alone will pool across versions when a question’s stable name is unchanged.
+`question_id` is survey-scoped (`(survey_id, stable_name)`): it pools a survey's
+versions of a same-named question and never crosses survey boundaries. So `GROUP BY
+question_version_id` keeps versions strictly separate; `GROUP BY question_id` pools
+them (within the one survey). Either way, two different surveys' same-named
+questions never mix.
 
-To pool equivalent questions across versions *despite a rename*, opt in with the
-canonical key (`COALESCE(parent_question_id, question_id)`), having first confirmed
-the recorded equivalence rationale (§4a).
+To pool across an identity boundary — a rename, or the same instrument reused — opt
+in with the canonical key (`COALESCE(parent_question_id, question_id)`), having first
+confirmed the recorded equivalence rationale (§4a).
 
 The dimensions you'll join: `dim_respondent`, `dim_survey_version`, `dim_question`
 (stable identity, type, equivalence links), `dim_question_version` (the specific

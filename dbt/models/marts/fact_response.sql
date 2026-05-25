@@ -16,7 +16,9 @@ with answers as (
         was_shown,
         answered,
         {{ surrogate_key(['survey_id', 'survey_version']) }} as survey_version_id,
-        {{ surrogate_key(['stable_name']) }} as question_id
+        -- Survey-scoped, matching dim_question (invariant 5: a stable_name-only key
+        -- silently pooled same-named questions across unrelated surveys).
+        {{ surrogate_key(['survey_id', 'stable_name']) }} as question_id
     from {{ ref('int_response_answers') }}
 )
 

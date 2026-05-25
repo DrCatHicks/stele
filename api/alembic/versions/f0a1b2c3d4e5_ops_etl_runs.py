@@ -42,6 +42,12 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # The init SQL creates `ops` (with the schema USAGE grants) on a fresh
+    # provision, but make the migration self-contained so it can't fail with
+    # "schema ops does not exist" on a database provisioned before ops was added
+    # to the init SQL. Idempotent; the init SQL still owns the schema-level grants.
+    op.execute("CREATE SCHEMA IF NOT EXISTS ops")
+
     op.create_table(
         "etl_runs",
         # Supplied by the runner (uuid4) so it can name the artifact dir before

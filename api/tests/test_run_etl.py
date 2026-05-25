@@ -74,8 +74,11 @@ def test_resolve_conninfo_strips_sqlalchemy_suffix(monkeypatch: pytest.MonkeyPat
 
 
 def _can_connect() -> bool:
+    # Evaluated at collection time (in the skipif below). Bound the probe with a
+    # short connect_timeout so collection stays fast on a machine without the DB
+    # rather than hanging on the default TCP timeout.
     try:
-        with psycopg.connect(runner.resolve_conninfo()):
+        with psycopg.connect(runner.resolve_conninfo(), connect_timeout=2):
             return True
     except (psycopg.OperationalError, RuntimeError):
         return False

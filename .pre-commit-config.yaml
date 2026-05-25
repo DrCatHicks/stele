@@ -3,6 +3,7 @@
 # Install once per clone:
 #   uv tool install pre-commit
 #   pre-commit install
+#   corepack enable && (cd frontend && pnpm install)   # for the frontend hooks below
 #
 # Run on all files manually:
 #   pre-commit run --all-files
@@ -47,13 +48,18 @@ repos:
         files: ^api/
         pass_filenames: false
 
-  # Frontend lint + format, mirroring the CI "TypeScript · lint" job exactly so a
-  # frontend eslint/prettier problem fails here instead of slipping past local
-  # commit and only failing in CI. Both `cd frontend` first: corepack pins the
+  # Frontend lint + format, running the same commands as the CI "TypeScript · lint"
+  # job so a frontend eslint/prettier problem fails here instead of slipping past
+  # local commit and only failing in CI. Both `cd frontend` first: corepack pins the
   # working pnpm (pnpm@9.12.0) only when CWD is the package dir — the global pnpm
-  # needs a newer Node. Whole-project (pass_filenames: false), like CI, so the
-  # hook result can't diverge from the CI check; `files: ^frontend/` keeps them
-  # from running on commits that don't touch the frontend.
+  # needs a newer Node. Whole-project (pass_filenames: false), like CI, so the hook
+  # result can't diverge from the CI check; `files: ^frontend/` keeps them from
+  # running on commits that don't touch the frontend.
+  #
+  # Prerequisites (unlike CI, the hook does not set these up itself — it would be
+  # wrong to mutate node_modules on every commit): corepack enabled so `pnpm` is on
+  # PATH, and deps installed (`pnpm install`). See the install note at the top. The
+  # dev container has both; a bare checkout needs the one-time setup first.
   - repo: local
     hooks:
       - id: frontend-eslint

@@ -397,7 +397,7 @@ sequenceDiagram
 
 dbt runs on demand. `make etl` rebuilds the marts schema from scratch in one command (the FR-11 contract; see *Run logging* below for the runner that wraps it). Full rebuild is preferred over incremental until rebuild time becomes painful.
 
-Response *content* comes exclusively from `app.raw_responses`. The normalized `app.responses` and `app.response_items` tables are an operational read-model and are not ETL inputs. dbt also reads one non-content metadata source — `pii.free_text_review_decisions`, the reviewer's promote/reject decisions (§3.9), which carry no PII text — to decide which high-risk free-text values may surface in the marts. Both are declared in dbt's `sources.yml`; the single-parser discipline (one JSON parser, in dbt, from `raw_responses`) is unchanged.
+Response *content* comes exclusively from `app.raw_responses`. The normalized `app.responses` and `app.response_items` tables are an operational read-model and are not ETL inputs. dbt also reads one non-content metadata source — `pii.free_text_review_decisions`, the reviewer's promote/reject decisions (§3.9), which carry no PII text — to decide which high-risk free-text values may surface in the marts. The invariant is unchanged: `app.raw_responses` remains the single source of response content, with two downstream consumers/derivations from it — the API derives the operational read-model, and dbt derives the warehouse — while `pii.free_text_review_decisions` contributes only review-decision metadata.
 
 ```mermaid
 flowchart LR

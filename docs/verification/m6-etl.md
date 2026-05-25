@@ -3,7 +3,9 @@
 Proves the FR-11 contract: the full marts schema rebuilds from `app.raw_responses`
 with **one command**, every run is **logged** with row counts, timings, and
 reproducibility metadata (`ops.etl_runs`), and dbt's artifacts are **archived per
-run** (NFR-2). The §3.7 custom-test suite runs as part of that single command, so a
+run** (NFR-2). Response *content* comes solely from `raw_responses`; dbt also reads
+one non-content metadata source — `pii.free_text_review_decisions` (the reviewer's
+promote/reject decisions, no PII text; M3.4) — which the run log counts alongside it. The §3.7 custom-test suite runs as part of that single command, so a
 rebuild that would corrupt the grain fails the command rather than landing.
 
 | Story | Adds |

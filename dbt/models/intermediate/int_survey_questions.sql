@@ -65,9 +65,12 @@ scalar_questions as (
         -- → numeric and date → date, other free text → text, everything else option.
         case
             when question_type in ('rating', 'boolean') then 'numeric'
-            when question_type in ('text', 'comment')
+            -- inputType diverts a `text` only; a `comment` is inherently free text
+            -- (SurveyJS ignores inputType on it), so a stray inputType must not
+            -- route it off the value_text/PII path (the safe direction).
+            when question_type = 'text'
                 and (element ->> 'inputType') in ('number', 'range') then 'numeric'
-            when question_type in ('text', 'comment')
+            when question_type = 'text'
                 and (element ->> 'inputType') = 'date' then 'date'
             when question_type in ('text', 'comment') then 'text'
             else 'option'

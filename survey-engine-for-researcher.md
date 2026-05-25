@@ -231,11 +231,9 @@ correct analysis:
 
 ### Two fact tables — don't conflate selections with respondents
 
-- **`fact_response_item`** is at **option-selection grain**: one row per option a
-  respondent chose. A multi-select question fans out to several rows. Counting rows
-  here counts *selections*, not people.
-- **`fact_response`** is at **respondent-question grain**: one row per respondent per
-  question. Use it for "how many people answered."
+- **`fact_response_item`** is at **selection grain**: one row per chosen option, plus a single row when no option is selected so routing states remain queryable.
+  Multi-select and ranking questions fan out to multiple rows; counting rows here counts *selections*, not people.
+- **`fact_response`** is at **respondent-question-occurrence grain**: one row per respondent per (sub-)question per `occurrence` (paneldynamic repeats); use it for "how many people answered."
 
 The classic mistake is reading selection counts as respondent counts. When in doubt,
 count people explicitly: `COUNT(DISTINCT respondent_id)`.

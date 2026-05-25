@@ -10,6 +10,9 @@ CREATE SCHEMA IF NOT EXISTS app;
 CREATE SCHEMA IF NOT EXISTS stg;
 CREATE SCHEMA IF NOT EXISTS marts;
 CREATE SCHEMA IF NOT EXISTS pii;
+-- Operational metadata (ETL run log, §3.7). Deliberately outside marts: run
+-- history is operational, not analytical. Table created + granted by Alembic.
+CREATE SCHEMA IF NOT EXISTS ops;
 
 -- Roles (per design doc §3.3)
 --
@@ -63,6 +66,14 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA stg, marts
     GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON TABLES TO stele_etl;
 ALTER DEFAULT PRIVILEGES IN SCHEMA stg, marts
     GRANT USAGE ON SEQUENCES TO stele_etl;
+
+-- ETL run log lives in ops (§3.7). Same model-C least-privilege as app: schema
+-- USAGE only here; the migration that creates ops.etl_runs grants the table-level
+-- SELECT/INSERT/UPDATE to stele_etl (the runner) and SELECT to stele_analyst.
+-- No schema-wide default privileges, so a future ops table is invisible until its
+-- own migration grants it.
+GRANT USAGE ON SCHEMA ops TO stele_etl;
+GRANT USAGE ON SCHEMA ops TO stele_analyst;
 
 -- Analyst reads marts only. marts tables are created by stele_etl (dbt), not by
 -- this init runner, so the same FOR ROLE hardening as app→stele_etl applies.

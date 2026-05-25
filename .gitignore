@@ -14,6 +14,10 @@ dbt_packages/
 logs/
 .user.yml
 
+# Per-run dbt artifact archive written by scripts/run_etl.py (§3.7). The
+# ops.etl_runs row is the index; the artifacts themselves aren't checked in.
+dbt/etl_artifacts/
+
 # Environment / secrets
 .env
 .env.*

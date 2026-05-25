@@ -1,23 +1,18 @@
+<!--
+  ARCHIVED SNAPSHOT — v1 (frozen 2026-05-25).
+  This is the design document as it stood at the close of the M0–M6 build, before
+  the as-built reconciliation. It captures the original design intent plus the
+  incremental in-flight syncs (§3.3 default-deny ETL, §3.4 definition_snapshot,
+  §3.10 administration & access control). Do not edit.
+  The live, maintained version is /survey-engine-design-doc.md (v2+). See its
+  Changelog for what changed and why.
+-->
+
 # Survey Engine and Data Warehouse — Engineering Design Document
 
-**Status:** Living — reconciled with the as-built system (M0–M6 complete)
+**Status:** Proposed
 **Author:** *(to fill)*
-**Last updated:** 2026-05-25
-**Version:** 2
-
-> This is the maintained design document. The original pre-build design — plus the
-> incremental syncs made during M0–M6 — is frozen at
-> [`docs/design/archive/survey-engine-design-doc.v1.md`](docs/design/archive/survey-engine-design-doc.v1.md).
-
-### Changelog
-
-**v2 (2026-05-25)** — reconciled the document with the system as actually built across milestones M0–M6. The architecture held; the changes are factual corrections where the build added detail the original design left open:
-
-- **§3.3 Schema layout** — added the `ops` schema (operational ETL metadata, introduced with the run log in §3.7). Corrected the ETL role's read scope: it reads the *declared dbt sources* — `app.raw_responses` plus the non-content `pii.free_text_review_decisions` (reviewer promote/reject decisions, no PII text) — not `app` alone, and it also writes the `ops` run log.
-- **§3.5 Value storage** — documented `value_kind`, the per-question classification (`option`/`text`/`numeric`/`date`) that decides which value column a question feeds. It is what distinguishes a numeric/date answer (a SurveyJS `text` with an `inputType`) from genuine free text, since both share `response_type = 'text'`.
-- **§3.7 ETL** — `etl_runs` lives in the `ops` schema; recorded the `make etl` runner (`scripts/run_etl.py`), the `running`/`success`/`failed` lifecycle, and the on-disk artifact archive. Reconciled the "reads only `raw_responses`" wording with the review-decision metadata source. Noted that the custom-test suite expanded with the M5 question-type breadth.
-
-Earlier in-flight syncs (already in v1): §3.3 default-deny ETL grants, §3.4 `definition_snapshot`, §3.10 administration & access control.
+**Last updated:** 2026-05-21
 
 ---
 
@@ -184,7 +179,7 @@ flowchart TB
 
 ### 3.3 Schema layout
 
-The database is organized into five schemas with distinct roles and grants:
+The database is organized into four schemas with distinct roles and grants:
 
 | Schema | Purpose | Writer |
 |---|---|---|
@@ -192,9 +187,8 @@ The database is organized into five schemas with distinct roles and grants:
 | `stg` | dbt staging models. 1:1 with operational tables, light cleaning and type casting. | ETL |
 | `marts` | Dimensional model and derived variables. Analyst-facing. | ETL |
 | `pii` | Identifying respondent data. Stricter grants. | Survey API, reviewer |
-| `ops` | Operational ETL metadata — the `etl_runs` log (§3.7). Outside the analyst star schema. | ETL |
 
-Database roles are scoped per schema with least-privilege grants. The survey API role writes only to `app` and `pii`. The ETL role reads only the **declared dbt sources** — granted per-table, not schema-wide, so operator secrets in `app.users`/`app.sessions` and any future table stay out of reach. Today those sources are `app.raw_responses` (the sole source of response *content*) and `pii.free_text_review_decisions` (the reviewer's promote/reject decisions — metadata only, no PII text; §3.9). The ETL role writes to `stg` and `marts`, and append-then-updates the `ops.etl_runs` log (no `DELETE`). The analyst role reads from `marts` and `ops`. A future ETL source adds its own per-table grant in the migration that introduces it.
+Database roles are scoped per schema with least-privilege grants. The survey API role writes only to `app` and `pii`. The ETL role reads only the **declared ETL sources** in `app` (currently `app.raw_responses` — granted per-table, not schema-wide, so operator secrets in `app.users`/`app.sessions` and any future table stay out of reach) and writes to `stg` and `marts`. The analyst role reads from `marts` only.
 
 ### 3.4 Operational data model (`app`)
 
@@ -286,7 +280,6 @@ erDiagram
         bigint question_id FK
         text prompt_text
         text response_type
-        text value_kind
     }
     dim_option {
         bigint option_key PK
@@ -313,9 +306,7 @@ erDiagram
 
 #### Value storage
 
-Closed-ended responses resolve via an `option_key` join. Open-ended responses use a slim polymorphic column set: `value_numeric`, `value_text`, `value_date`. Exactly one of `{option_key, value_numeric, value_text, value_date}` is populated per fact row. Strong typing for BI tools without the cost of a fully wide schema.
-
-Which column a question feeds is decided by a `value_kind` classification (`option` / `text` / `numeric` / `date`) computed once on `dim_question_version` and threaded through the answer side. `value_kind` exists because the SurveyJS `response_type` is not enough to tell numeric/date answers from free text: a numeric or date answer is a `text` question carrying an `inputType` (`number`/`range` → `value_numeric`, `date` → `value_date`), so it shares `response_type = 'text'` with genuine free text but must not land in `value_text` — nor reach the free-text PII path (§3.9). `value_kind = 'text'` (not the question type) is therefore what gates both `value_text` population and PII routing. `boolean` maps to `value_numeric` (1/0); `rating` is numeric-valued.
+Closed-ended responses resolve via an `option_key` join. Open-ended responses use a slim polymorphic column set: `value_numeric`, `value_text`, `value_date`. Exactly one is populated per fact row, governed by the question's response type. Strong typing for BI tools without the cost of a fully wide schema.
 
 #### Routing fidelity
 
@@ -395,16 +386,16 @@ sequenceDiagram
 
 ### 3.7 ETL
 
-dbt runs on demand. `make etl` rebuilds the marts schema from scratch in one command (the FR-11 contract; see *Run logging* below for the runner that wraps it). Full rebuild is preferred over incremental until rebuild time becomes painful.
+dbt runs on demand. One command (`make etl` or equivalent) rebuilds the marts schema from scratch. Full rebuild is preferred over incremental until rebuild time becomes painful.
 
-Response *content* comes exclusively from `app.raw_responses`. The normalized `app.responses` and `app.response_items` tables are an operational read-model and are not ETL inputs. dbt also reads one non-content metadata source — `pii.free_text_review_decisions`, the reviewer's promote/reject decisions (§3.9), which carry no PII text — to decide which high-risk free-text values may surface in the marts. Both are declared in dbt's `sources.yml`; the single-parser discipline (one JSON parser, in dbt, from `raw_responses`) is unchanged.
+dbt reads exclusively from `app.raw_responses`. The normalized `app.responses` and `app.response_items` tables are an operational read-model and are not ETL inputs.
 
 ```mermaid
 flowchart LR
     A[app.raw_responses<br/>payload + shown_questions] --> B[stg models<br/>1:1 + cleaning]
     B --> C[intermediate<br/>derived variables]
     C --> D[marts<br/>dim_* + fact_response_item + fact_response]
-    D --> E[(ops.etl_runs log<br/>row counts, timings,<br/>dbt artifacts)]
+    D --> E[(etl_runs log<br/>row counts, timings,<br/>dbt artifacts)]
 ```
 
 Routing reconstruction is not an intermediate model — the shown-set is captured at submission time and threads through staging directly to `was_shown`.
@@ -431,21 +422,19 @@ Custom tests:
 - Parent-question integrity: any populated `parent_question_id` has a non-null `parent_question_rationale` and a `first_published_at` strictly before the child's.
 - Shown-set integrity: every `question_id` referenced in a fact row with `was_shown = true` appears in the corresponding submission's `shown_questions`.
 
-These five are the load-bearing invariants. The question-type breadth work (multi-select, ranked, matrix, repeating-group, scalar) added type-specific companions — e.g. the routed-past complement to shown-set integrity, per-occurrence and rank contiguity, matrix-cell resolution, and the `value_kind` ⟺ value-column check — so each new grain stays pinned.
-
 #### Run logging
 
-The `ops.etl_runs` table records every invocation. The `make etl` runner (`scripts/run_etl.py`) wraps `dbt build`: it reads the declared sources at start, inserts a `running` row, runs the build, archives dbt's artifacts, and resolves the row to `success` (with mart counts) or `failed` (a non-zero build *or* a raised step — never left stuck at `running`). It connects as the least-privileged ETL role, so the run-log grants are exercised on every real run, and CI runs the same command rather than a bare `dbt build`.
+An `etl_runs` table records every invocation:
 
 | Column | Notes |
 |---|---|
-| `run_id` | UUID, supplied by the runner |
-| `started_at`, `completed_at`, `status` | Timing and outcome (`running` / `success` / `failed`) |
-| `source_row_counts` | jsonb: rows per declared source at run start |
-| `mart_row_counts` | jsonb: rows per marts table after a successful run (null on failure) |
+| `run_id` | UUID |
+| `started_at`, `completed_at`, `status` | Timing and outcome |
+| `source_row_counts` | jsonb: rows per source table at run start |
+| `mart_row_counts` | jsonb: rows per marts table after run |
 | `dbt_version`, `git_sha` | Reproducibility metadata |
 
-dbt's `run_results.json` and `manifest.json` are archived per run on disk at `dbt/etl_artifacts/<run_id>/`; the `run_id` is the index, so the log row points at its artifacts without a path column.
+dbt's `run_results.json` and `manifest.json` artifacts are archived alongside.
 
 ### 3.8 Respondent withdrawal
 

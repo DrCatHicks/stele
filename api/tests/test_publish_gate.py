@@ -521,6 +521,15 @@ def test_numeric_text_input_skips_low_risk_rationale_requirement() -> None:
     validate_definition(_def({"type": "text", "name": "age", "inputType": "number"}))
 
 
+def test_comment_with_stray_input_type_stays_free_text() -> None:
+    # A comment is inherently multi-line free text; SurveyJS ignores inputType on it.
+    # A stray inputType must NOT divert it off the PII path (the safe direction) —
+    # so it stays a free-text question and a missing 'low' rationale would still bite.
+    definition = _def({"type": "comment", "name": "story", "inputType": "number"})
+    names = {q.name for q in extract_free_text_questions(definition)}
+    assert names == {"story"}
+
+
 def test_nameless_display_element_ignored() -> None:
     # An html block carries no name → not a question, not gated.
     validate_definition(_def({"type": "html", "html": "<p>hi</p>"}, _radio()))

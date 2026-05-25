@@ -174,10 +174,16 @@ def _panel_template_elements(element: dict[str, Any]) -> Iterator[dict[str, Any]
 
 
 def _is_scalar_text(element: dict[str, Any]) -> bool:
-    """A text/comment element whose `inputType` routes it to value_numeric/value_date
+    """A `text` element whose `inputType` routes it to value_numeric/value_date
     (M5.5), so it is NOT free text. Mirrors dbt's value_kind classification: only a
-    numeric/date inputType diverts a text question off the value_text/PII path."""
-    return element.get("inputType") in (NUMERIC_INPUT_TYPES | DATE_INPUT_TYPES)
+    numeric/date inputType on a `text` diverts it off the value_text/PII path.
+
+    Restricted to `type: 'text'` — `comment` is inherently multi-line free text and
+    SurveyJS ignores `inputType` on it, so a stray `inputType` on a comment must NOT
+    divert it off the PII path (the safe direction; invariant 6 / §3.9)."""
+    return element.get("type") == "text" and element.get("inputType") in (
+        NUMERIC_INPUT_TYPES | DATE_INPUT_TYPES
+    )
 
 
 def extract_free_text_questions(definition: dict[str, Any]) -> list[FreeTextQuestion]:

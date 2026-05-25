@@ -14,9 +14,11 @@ Two layers:
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import uuid
 from pathlib import Path
+from types import ModuleType
 
 import psycopg
 import pytest
@@ -26,6 +28,15 @@ import pytest
 os.environ.setdefault("STELE_ALLOW_DEV_FALLBACK", "1")
 
 from api.etl import runner
+
+# The thin CLI (`make etl` / CI invoke it) is a standalone script, not a package
+# module; load it by path the way test_provision_cli does.
+_CLI_PATH = Path(__file__).resolve().parents[2] / "scripts" / "run_etl.py"
+_spec = importlib.util.spec_from_file_location("run_etl_cli", _CLI_PATH)
+assert _spec is not None
+assert _spec.loader is not None
+cli: ModuleType = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(cli)
 
 # --- pure units ----------------------------------------------------------------
 
@@ -68,6 +79,35 @@ def test_resolve_conninfo_strips_sqlalchemy_suffix(monkeypatch: pytest.MonkeyPat
         "STELE_ETL_DATABASE_URL", "postgresql+psycopg://stele_etl:dev@localhost:5432/stele"
     )
     assert "+psycopg" not in runner.resolve_conninfo()
+
+
+# --- CLI (scripts/run_etl.py — the `make etl` / CI entry point) -----------------
+
+
+def test_cli_no_args_passes_none_through(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, list[str] | None] = {}
+
+    def _fake_run_etl(extra_args: list[str] | None = None) -> int:
+        captured["extra_args"] = extra_args
+        return 0
+
+    monkeypatch.setattr(cli, "run_etl", _fake_run_etl)
+    assert cli.main([]) == 0
+    # No pass-through args → None, so the runner uses its plain `dbt build`.
+    assert captured["extra_args"] is None
+
+
+def test_cli_forwards_dbt_args_and_returns_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, list[str] | None] = {}
+
+    def _fake_run_etl(extra_args: list[str] | None = None) -> int:
+        captured["extra_args"] = extra_args
+        return 2  # propagate dbt's exit code so `make etl` / CI fail on a failed build
+
+    monkeypatch.setattr(cli, "run_etl", _fake_run_etl)
+    # Flags meant for dbt go after `--` so argparse treats them as positionals.
+    assert cli.main(["--", "--select", "dim_question"]) == 2
+    assert captured["extra_args"] == ["--select", "dim_question"]
 
 
 # --- integration (real ops.etl_runs as stele_etl, dbt stubbed) -----------------

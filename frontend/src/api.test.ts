@@ -33,7 +33,7 @@ describe('fetchSurvey', () => {
 
     const result = await fetchSurvey('s', 1);
 
-    expect(fetchMock).toHaveBeenCalledWith('/surveys/s/versions/1', undefined);
+    expect(fetchMock).toHaveBeenCalledWith('/api/surveys/s/versions/1', undefined);
     expect(result).toEqual(detail);
   });
 
@@ -58,7 +58,7 @@ describe('submitResponse', () => {
     const result = await submitResponse('s', 1, body);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      '/surveys/s/versions/1/responses',
+      '/api/surveys/s/versions/1/responses',
       expect.objectContaining({ method: 'POST', body: JSON.stringify(body) }),
     );
     expect(result.raw_response_id).toBe(1);
@@ -74,7 +74,7 @@ describe('auth + authoring calls', () => {
     const result = await login('a@b.c', 'pw');
 
     expect(fetchMock).toHaveBeenCalledWith(
-      '/auth/login',
+      '/api/auth/login',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ email: 'a@b.c', password: 'pw' }),
@@ -89,7 +89,7 @@ describe('auth + authoring calls', () => {
 
     await listSurveys();
 
-    expect(fetchMock).toHaveBeenCalledWith('/surveys', undefined);
+    expect(fetchMock).toHaveBeenCalledWith('/api/surveys', undefined);
   });
 
   it('publishSurvey posts to the publish endpoint', async () => {
@@ -101,7 +101,7 @@ describe('auth + authoring calls', () => {
     await publishSurvey('s', 1);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      '/surveys/s/versions/1/publish',
+      '/api/surveys/s/versions/1/publish',
       expect.objectContaining({ method: 'POST' }),
     );
   });

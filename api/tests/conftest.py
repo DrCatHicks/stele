@@ -21,7 +21,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 os.environ.setdefault("STELE_COOKIE_SECURE", "false")
 
 from api.db import get_session
-from api.main import app
+
+# The API app carries routes at their bare prefixes (the ``/api`` namespace is
+# added by the production mount in api.main:app); drive it directly here.
+from api.main import api_app as app
 
 TEST_DATABASE_URL = os.environ.get(
     "STELE_DATABASE_URL",

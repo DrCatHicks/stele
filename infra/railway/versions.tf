@@ -7,6 +7,17 @@
 terraform {
   required_version = ">= 1.6.0" # OpenTofu 1.6+
 
+  # State holds every generated secret. For the demo it's local + gitignored
+  # (infra/README.md § state holds secrets). Before real prod / multi-operator
+  # use, move to an encrypted remote backend: uncomment + fill in, then
+  # `tofu init -migrate-state`. See docs/verification/m7.6-demo-to-prod.md.
+  # backend "s3" {
+  #   bucket  = "stele-tofu-state"
+  #   key     = "railway/production.tfstate"
+  #   region  = "us-east-1"
+  #   encrypt = true
+  # }
+
   required_providers {
     railway = {
       source  = "terraform-community-providers/railway"

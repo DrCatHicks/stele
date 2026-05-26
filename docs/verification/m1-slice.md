@@ -18,8 +18,8 @@ uv sync
 cd api && uv run alembic upgrade head && cd ..
 ```
 
-The container's init applies `.devcontainer/postgres-init/01-schemas-and-roles.sql`
-(schemas, roles, grants). `alembic upgrade head` creates the `app` tables —
+The container's init applies `.devcontainer/postgres-init/01-roles.sql` then
+`02-schemas-and-grants.sql` (roles, then schemas + grants). `alembic upgrade head` creates the `app` tables —
 including `raw_responses.definition_snapshot`.
 
 ## 2. Seed responses (real write path)

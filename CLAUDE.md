@@ -43,7 +43,7 @@ docker compose -f .devcontainer/docker-compose.yml down -v
 | `marts` | `stele_etl` | `stele_analyst` | Star schema |
 | `pii` | `stele_api` | `stele_pii_reviewer` | Identifying data |
 
-Role/grant plumbing: `.devcontainer/postgres-init/01-schemas-and-roles.sql` (idempotent). Table changes: Alembic.
+Role/grant plumbing: `.devcontainer/postgres-init/01-roles.sql` (dev/CI role creation) + `02-schemas-and-grants.sql` (schemas/grants, shared verbatim with prod via `scripts/bootstrap_roles.py`); both idempotent. Table changes: Alembic.
 
 ## Invariants — don't break
 
@@ -108,7 +108,7 @@ New question type = work in three places: runtime, publish test, dbt staging.
 ## Don't without asking
 
 - Modify `survey-engine-*.md`. Treat the design docs as read-only reference; propose edits in chat, don't sync them to code changes.
-- Modify role/grant SQL in `.devcontainer/postgres-init/01-schemas-and-roles.sql`. Grant changes are silent until they bite under a non-superuser role.
+- Modify role/grant SQL in `.devcontainer/postgres-init/{01-roles,02-schemas-and-grants}.sql` (or the prod runner `scripts/bootstrap_roles.py` that applies the latter). Grant changes are silent until they bite under a non-superuser role — the `prod-bootstrap-sim` CI job rehearses that path.
 - Make dbt read normalized `app.*` tables.
 - `UPDATE`/`DELETE` `raw_responses` outside the tombstone workflow.
 - Auto-populate `parent_question_id` from any heuristic.

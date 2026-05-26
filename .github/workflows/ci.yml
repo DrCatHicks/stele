@@ -88,7 +88,8 @@ jobs:
       - name: Provision database (schemas, roles, grants)
         run: |
           psql -c "CREATE DATABASE stele;"
-          psql -v ON_ERROR_STOP=1 -d postgres -f .devcontainer/postgres-init/01-schemas-and-roles.sql
+          psql -v ON_ERROR_STOP=1 -d stele -f .devcontainer/postgres-init/01-roles.sql
+          psql -v ON_ERROR_STOP=1 -d stele -f .devcontainer/postgres-init/02-schemas-and-grants.sql
       - name: Migrate
         # Run migrations as the service superuser so the schema default
         # privileges defined in the init SQL apply to the created tables.
@@ -190,7 +191,8 @@ jobs:
       - name: Provision database (schemas, roles, grants)
         run: |
           psql -c "CREATE DATABASE stele;"
-          psql -v ON_ERROR_STOP=1 -d postgres -f .devcontainer/postgres-init/01-schemas-and-roles.sql
+          psql -v ON_ERROR_STOP=1 -d stele -f .devcontainer/postgres-init/01-roles.sql
+          psql -v ON_ERROR_STOP=1 -d stele -f .devcontainer/postgres-init/02-schemas-and-grants.sql
       - name: Migrate + seed (as superuser, so init default privileges apply)
         # Tables created by postgres → the init SQL's default-privilege grants
         # give stele_api its app/pii writes. stele_etl's SELECT is least-privilege:
@@ -218,6 +220,85 @@ jobs:
         env:
           STELE_ETL_DATABASE_URL: postgresql://stele_etl:dev@localhost:5432/stele
         run: uv run python scripts/run_etl.py
+
+  prod-bootstrap-sim:
+    name: Python · prod bootstrap sim (non-superuser admin)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    # Dev/CI bootstrap as the cluster SUPERUSER, which hides grant bugs that only
+    # bite under the non-superuser owner a managed Postgres (Railway, RDS, Cloud
+    # SQL) hands you. This job rehearses the real prod path: a CREATEROLE-but-not-
+    # superuser admin that OWNS its database is the single identity that bootstraps
+    # the roles from secrets AND runs migrations (bootstrap-er == migrator), then
+    # the least-privilege roles do their real work. It proves the split init SQL,
+    # bootstrap_roles.py, the grantor-guarded least-privilege migration, and the
+    # marts FOR ROLE default privilege all hold without a superuser.
+    env:
+      STELE_API_PASSWORD: testapipw
+      STELE_ETL_PASSWORD: testetlpw
+      STELE_ANALYST_PASSWORD: testanalystpw
+      STELE_PII_REVIEWER_PASSWORD: testreviewerpw
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+      - run: uv sync
+      - name: Create non-superuser admin + its database (simulates managed PG)
+        # CREATEROLE (mints the four roles) but NOT superuser; OWNER of stele_prod
+        # gives it CREATE on the database, like a managed-PG owner role.
+        run: |
+          psql -v ON_ERROR_STOP=1 -c "CREATE ROLE stele_admin LOGIN CREATEROLE PASSWORD 'adminpw';"
+          psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE stele_prod OWNER stele_admin;"
+      - name: Bootstrap roles, schemas, grants as the admin
+        env:
+          STELE_DATABASE_URL: postgresql+psycopg://stele_admin:adminpw@localhost:5432/stele_prod
+        run: uv run python scripts/bootstrap_roles.py
+      - name: Migrate as the SAME admin (bootstrap-er == migrator)
+        working-directory: api
+        env:
+          STELE_DATABASE_URL: postgresql+psycopg://stele_admin:adminpw@localhost:5432/stele_prod
+        run: uv run alembic upgrade head
+      - name: Seed as stele_api (proves the app role's writes under non-superuser bootstrap)
+        env:
+          STELE_DATABASE_URL: postgresql+psycopg://stele_api:testapipw@localhost:5432/stele_prod
+        run: uv run python scripts/seed_example_survey.py
+      - name: ETL as stele_etl (proves marts build + FOR ROLE default privilege → analyst)
+        env:
+          STELE_ETL_DATABASE_URL: postgresql://stele_etl:testetlpw@localhost:5432/stele_prod
+          DBT_HOST: localhost
+          DBT_USER: stele_etl
+          DBT_PASSWORD: testetlpw
+          DBT_DBNAME: stele_prod
+        run: uv run python scripts/run_etl.py
+      - name: Assert least-privilege boundaries hold under non-superuser bootstrap
+        run: |
+          set -euo pipefail
+          echo "stele_etl reads its sole declared source (app.raw_responses):"
+          PGPASSWORD=testetlpw psql -v ON_ERROR_STOP=1 -U stele_etl -d stele_prod \
+            -c "SELECT count(*) FROM app.raw_responses;"
+          echo "stele_etl is DENIED operator secrets (default-deny on app):"
+          if PGPASSWORD=testetlpw psql -v ON_ERROR_STOP=1 -U stele_etl -d stele_prod \
+               -c "SELECT 1 FROM app.users;" >/dev/null 2>&1; then
+            echo "FAIL: stele_etl can read app.users"; exit 1
+          fi
+          echo "  denied as expected."
+          echo "stele_analyst reads a dbt-built marts table (FOR ROLE default priv held):"
+          PGPASSWORD=testanalystpw psql -v ON_ERROR_STOP=1 -U stele_analyst -d stele_prod \
+            -c "SELECT count(*) FROM marts.fact_response_item;"
 
   docker-build:
     name: Docker · build production image

@@ -1,9 +1,21 @@
--- Stele initial database setup.
+-- Stele schemas, grants, and default privileges.
 -- Idempotent; safe to re-run.
-
--- Database and developer role (created by post-create.sh as superuser before this runs).
-
-\c stele
+--
+-- SHARED VERBATIM across dev, CI, and production. Dev/CI apply it with psql
+-- (post-create.sh / ci.yml), connected to `stele`; production applies it through
+-- psycopg from scripts/bootstrap_roles.py, after that script has created the four
+-- roles from real secrets. Keep this file free of psql meta-commands (no \c, no
+-- \set) so psycopg can execute it unchanged — the caller is already connected to
+-- the target database.
+--
+-- This is the load-bearing, single-sourced half of the bootstrap: who can touch
+-- what. The roles it references are created beforehand — by 01-roles.sql in
+-- dev/CI, by bootstrap_roles.py in prod (CLAUDE.md: grant changes are silent
+-- until they bite under a non-superuser role, so they live in exactly one place).
+--
+-- The executing identity MUST also be the migrator (`alembic upgrade head`): the
+-- ALTER DEFAULT PRIVILEGES below are grantor-specific, so they only reach the
+-- tables a migration creates if the same role created the defaults and the tables.
 
 -- Schemas
 CREATE SCHEMA IF NOT EXISTS app;
@@ -13,30 +25,6 @@ CREATE SCHEMA IF NOT EXISTS pii;
 -- Operational metadata (ETL run log, §3.7). Deliberately outside marts: run
 -- history is operational, not analytical. Table created + granted by Alembic.
 CREATE SCHEMA IF NOT EXISTS ops;
-
--- Roles (per design doc §3.3)
---
--- In dev we don't enforce least-privilege strictly — the developer
--- needs to wear all hats — but we create the roles so that connection
--- strings, migrations, and dbt profiles match what will exist in prod.
--- The dev superuser inherits all of them.
-
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'stele_api') THEN
-        CREATE ROLE stele_api LOGIN PASSWORD 'dev';
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'stele_etl') THEN
-        CREATE ROLE stele_etl LOGIN PASSWORD 'dev';
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'stele_analyst') THEN
-        CREATE ROLE stele_analyst LOGIN PASSWORD 'dev';
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'stele_pii_reviewer') THEN
-        CREATE ROLE stele_pii_reviewer LOGIN PASSWORD 'dev';
-    END IF;
-END
-$$;
 
 -- Grants per design doc §3.3
 -- API writes to app and pii.
@@ -76,7 +64,8 @@ GRANT USAGE ON SCHEMA ops TO stele_etl;
 GRANT USAGE ON SCHEMA ops TO stele_analyst;
 
 -- Analyst reads marts only. marts tables are created by stele_etl (dbt), not by
--- this init runner, so the same FOR ROLE hardening as app→stele_etl applies.
+-- the migrator, so a FOR ROLE stele_etl default-privilege rule is needed for the
+-- analyst to read what dbt creates.
 GRANT USAGE ON SCHEMA marts TO stele_analyst;
 ALTER DEFAULT PRIVILEGES IN SCHEMA marts
     GRANT SELECT ON TABLES TO stele_analyst;
@@ -92,8 +81,8 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA pii
 -- Dev container only: migrations run as the superuser stele_dev, so marts
 -- tables it creates need the FOR ROLE default-privilege rule so the analyst can
 -- read them. Guarded because stele_dev does not exist in CI (where postgres runs
--- migrations and the unqualified marts block above already applies). No-op
--- anywhere stele_dev is absent. No app rule here: stele_etl's app access is
+-- migrations and the unqualified marts block above already applies) or in prod.
+-- No-op anywhere stele_dev is absent. No app rule here: stele_etl's app access is
 -- table-level on declared ETL sources, granted in migrations (see above).
 DO $$
 BEGIN

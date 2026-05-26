@@ -25,10 +25,17 @@ grants persist as server state Alembic can't see): it revokes the object-level
 grant on existing tables and reverses the default-privilege entries the old init
 SQL created — one per grantor (postgres ran init / CI migrations; stele_api in
 prod; stele_dev in the dev container), since ALTER DEFAULT PRIVILEGES is keyed by
-the role whose created tables it covers. Reversal is run as a superuser
-(postgres in CI, stele_dev in dev), which may target any FOR ROLE. The stele_dev
-variant is guarded because that role is absent in CI. On a fresh build the init
-SQL creates none of these entries, so every reversal is a harmless no-op.
+the role whose created tables it covers. On a fresh build the init SQL creates
+none of these entries, so every reversal is a harmless no-op.
+
+Each FOR ROLE reversal is guarded on the grantor *existing* and the migrator
+holding its inherited privileges (pg_has_role ... 'USAGE'). A superuser passes
+both for every role, so dev/CI behavior is unchanged; a managed-Postgres
+non-superuser admin (M7.3) — which is not a member of `postgres` (a role that may
+not even exist there) and has only INHERIT-FALSE membership of the roles it
+created — skips them, which is correct: a fresh prod DB has nothing to reverse.
+Without the guard, the bare `ALTER DEFAULT PRIVILEGES FOR ROLE postgres` would
+fail the whole migration on managed Postgres.
 
 The M3.1 migration's targeted `REVOKE ... FROM stele_etl` on users/sessions is
 subsumed by this default-deny model and becomes a no-op on fresh builds; it is
@@ -45,11 +52,48 @@ down_revision: str | Sequence[str] | None = "f4a5b6c7d8e9"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-# Roles that created app tables and therefore own a default-privilege entry the
-# old init SQL set for stele_etl. postgres: init runner / CI migration runner.
-# stele_api: prod migration runner. stele_dev: dev-container migration runner
-# (guarded separately — absent in CI).
-_GRANTOR_ROLES_ALWAYS_PRESENT = ("postgres", "stele_api")
+# Roles that may own a default-privilege entry the old init SQL set for stele_etl,
+# keyed by the grantor whose created tables it covers. postgres: init runner / CI
+# migration runner. stele_api: prod migration runner (legacy). stele_dev:
+# dev-container migration runner. Each is reversed only if it exists AND the
+# migrator can target it (see _reverse_app_default_privileges) — so a managed-PG
+# non-superuser admin, a member of none of them with inherited privilege, skips
+# all three, which is correct on a fresh DB that has no such entry to reverse.
+_GRANTOR_ROLES = ("postgres", "stele_api", "stele_dev")
+
+
+def _reverse_app_default_privileges(action: str) -> None:
+    """Emit a guarded ALTER DEFAULT PRIVILEGES per grantor (action: REVOKE/GRANT).
+
+    Runs the statement only when the grantor role exists and the current role
+    holds its inherited privileges (pg_has_role 'USAGE'); ALTER DEFAULT PRIVILEGES
+    FOR ROLE requires the latter, and a bare statement for an unprivileged or
+    absent grantor (e.g. `postgres` on managed Postgres) would abort the migration.
+    """
+    verb = (
+        "REVOKE SELECT ON TABLES FROM stele_etl"
+        if action == "REVOKE"
+        else ("GRANT SELECT ON TABLES TO stele_etl")
+    )
+    # _GRANTOR_ROLES is a hardcoded constant, not user input — no injection vector.
+    roles = ", ".join(f"'{r}'" for r in _GRANTOR_ROLES)
+    op.execute(
+        f"""
+        DO $$
+        DECLARE grantor text;
+        BEGIN
+            FOREACH grantor IN ARRAY ARRAY[{roles}] LOOP
+                IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = grantor)
+                   AND pg_has_role(current_user, grantor, 'USAGE') THEN
+                    EXECUTE format(
+                        'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA app {verb}',
+                        grantor);
+                END IF;
+            END LOOP;
+        END
+        $$;
+        """  # noqa: S608
+    )
 
 
 def upgrade() -> None:
@@ -57,25 +101,8 @@ def upgrade() -> None:
     op.execute("REVOKE SELECT ON ALL TABLES IN SCHEMA app FROM stele_etl")
 
     # Future app tables: reverse the inherited default-privilege grants so a new
-    # table is no longer auto-readable by the ETL role. One per grantor.
-    for role in _GRANTOR_ROLES_ALWAYS_PRESENT:
-        # role is from a hardcoded constant, not user input — no injection vector.
-        op.execute(
-            f"ALTER DEFAULT PRIVILEGES FOR ROLE {role} IN SCHEMA app "  # noqa: S608
-            "REVOKE SELECT ON TABLES FROM stele_etl"
-        )
-    op.execute(
-        """
-        DO $$
-        BEGIN
-            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'stele_dev') THEN
-                EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE stele_dev IN SCHEMA app '
-                    'REVOKE SELECT ON TABLES FROM stele_etl';
-            END IF;
-        END
-        $$;
-        """
-    )
+    # table is no longer auto-readable by the ETL role. One per grantor, guarded.
+    _reverse_app_default_privileges("REVOKE")
 
     # The one declared ETL source. raw_responses already exists (initial
     # migration); this adopts it under the new explicit-grant model.
@@ -85,21 +112,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     # Restore the prior schema-wide SELECT model.
     op.execute("GRANT SELECT ON ALL TABLES IN SCHEMA app TO stele_etl")
-    for role in _GRANTOR_ROLES_ALWAYS_PRESENT:
-        # role is from a hardcoded constant, not user input — no injection vector.
-        op.execute(
-            f"ALTER DEFAULT PRIVILEGES FOR ROLE {role} IN SCHEMA app "
-            "GRANT SELECT ON TABLES TO stele_etl"
-        )
-    op.execute(
-        """
-        DO $$
-        BEGIN
-            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'stele_dev') THEN
-                EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE stele_dev IN SCHEMA app '
-                    'GRANT SELECT ON TABLES TO stele_etl';
-            END IF;
-        END
-        $$;
-        """
-    )
+    _reverse_app_default_privileges("GRANT")

@@ -14,8 +14,12 @@
 # service's env (the pre-deploy needs it) — a known tradeoff, see docs/verification/m7.4-railway.md.
 #
 # ETL runs as a cron service (M7.5) — the same image, started on the `etl` verb on
-# a schedule (var.etl_cron_schedule), connecting as least-privilege stele_etl. An
-# external analyst TCP proxy is deferred to M7.6.
+# a schedule (var.etl_cron_schedule), connecting as least-privilege stele_etl.
+#
+# Analysts/reviewers reach Postgres directly (M3.5 per-user roles) through an
+# opt-in public TCP proxy (M7.6, var.enable_postgres_proxy), and the generated role
+# passwords are rotatable via the *_password_override variables — see the override
+# locals below and docs/verification/m7.6-demo-to-prod.md.
 
 # ---- Generated secrets -------------------------------------------------------
 # DB passwords are alphanumeric (special = false) so they need no URL-escaping in
@@ -56,13 +60,24 @@ locals {
   pg_host = "${railway_service.postgres.name}.railway.internal"
   pg_port = 5432
 
+  # Effective password = the operator's override if set, else the generated one.
+  # A rotation flows: rotate_role_password.py ALTERs the live role, then the
+  # operator sets the matching *_password_override and applies, so the connection
+  # strings below pick up the new value (the generated random_password stays inert
+  # once overridden). See variables.tf § secret overrides.
+  admin_password              = var.admin_password_override != "" ? var.admin_password_override : random_password.admin.result
+  stele_api_password          = var.stele_api_password_override != "" ? var.stele_api_password_override : random_password.stele_api.result
+  stele_etl_password          = var.stele_etl_password_override != "" ? var.stele_etl_password_override : random_password.stele_etl.result
+  stele_analyst_password      = var.stele_analyst_password_override != "" ? var.stele_analyst_password_override : random_password.stele_analyst.result
+  stele_pii_reviewer_password = var.stele_pii_reviewer_password_override != "" ? var.stele_pii_reviewer_password_override : random_password.stele_pii_reviewer.result
+
   # SQLAlchemy/psycopg driver tag matches dev/CI (postgresql+psycopg://). The web
   # app uses it directly; bootstrap_roles.py strips the tag for libpq.
-  admin_url     = "postgresql+psycopg://postgres:${random_password.admin.result}@${local.pg_host}:${local.pg_port}/${var.database_name}"
-  stele_api_url = "postgresql+psycopg://stele_api:${random_password.stele_api.result}@${local.pg_host}:${local.pg_port}/${var.database_name}"
+  admin_url     = "postgresql+psycopg://postgres:${local.admin_password}@${local.pg_host}:${local.pg_port}/${var.database_name}"
+  stele_api_url = "postgresql+psycopg://stele_api:${local.stele_api_password}@${local.pg_host}:${local.pg_port}/${var.database_name}"
   # The ETL cron service's run-log writes (ops.etl_runs) go through this; dbt itself
   # reads the DBT_* vars below. Both connect as least-privilege stele_etl.
-  stele_etl_url = "postgresql+psycopg://stele_etl:${random_password.stele_etl.result}@${local.pg_host}:${local.pg_port}/${var.database_name}"
+  stele_etl_url = "postgresql+psycopg://stele_etl:${local.stele_etl_password}@${local.pg_host}:${local.pg_port}/${var.database_name}"
 }
 
 # ---- Project + default environment -------------------------------------------
@@ -105,8 +120,12 @@ resource "railway_variable_collection" "postgres" {
       value = "postgres"
     },
     {
+      # Establishes the superuser password at initdb (first boot on an empty
+      # volume); the Railway image ignores changes after that, so admin rotation
+      # is an ALTER ROLE (rotate_role_password.py) — the override just keeps this
+      # value consistent with what the script set.
       name  = "POSTGRES_PASSWORD"
-      value = random_password.admin.result
+      value = local.admin_password
     },
     {
       name  = "POSTGRES_DB"
@@ -158,19 +177,19 @@ resource "railway_variable_collection" "web" {
     # them (existing roles are never re-passworded).
     {
       name  = "STELE_API_PASSWORD"
-      value = random_password.stele_api.result
+      value = local.stele_api_password
     },
     {
       name  = "STELE_ETL_PASSWORD"
-      value = random_password.stele_etl.result
+      value = local.stele_etl_password
     },
     {
       name  = "STELE_ANALYST_PASSWORD"
-      value = random_password.stele_analyst.result
+      value = local.stele_analyst_password
     },
     {
       name  = "STELE_PII_REVIEWER_PASSWORD"
-      value = random_password.stele_pii_reviewer.result
+      value = local.stele_pii_reviewer_password
     },
     {
       name  = "STELE_SESSION_SECRET"
@@ -237,7 +256,7 @@ resource "railway_variable_collection" "etl" {
     },
     {
       name  = "DBT_PASSWORD"
-      value = random_password.stele_etl.result
+      value = local.stele_etl_password
     },
     {
       name  = "DBT_DBNAME"
@@ -256,4 +275,22 @@ resource "railway_service_domain" "web" {
   subdomain      = var.web_subdomain
   environment_id = railway_project.stele.default_environment.id
   service_id     = railway_service.web.id
+}
+
+# ---- Optional public Postgres TCP proxy (analyst/reviewer direct access) -----
+#
+# Analysts and reviewers query Postgres directly with the per-user login roles the
+# M3.5 provisioning CLI mints (members of stele_analyst / stele_pii_reviewer,
+# NOINHERIT). Railway's Postgres sits on the project's private network, so those
+# credentials need a path in from outside — a TCP proxy maps a public host:port to
+# the service's internal 5432. Auth is still Postgres password + the least-priv
+# group role, but it is a public endpoint, so it's OFF by default (M7.6): turn it
+# on only when someone actually needs warehouse access, and treat it as a revisit
+# item before real PII (docs/verification/m7.6-demo-to-prod.md). Retrieve the
+# public host:port with `tofu output postgres_proxy`.
+resource "railway_tcp_proxy" "postgres" {
+  count            = var.enable_postgres_proxy ? 1 : 0
+  environment_id   = railway_project.stele.default_environment.id
+  service_id       = railway_service.postgres.id
+  application_port = local.pg_port
 }

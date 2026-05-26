@@ -43,13 +43,23 @@ Retrieve a generated credential (e.g. to hand an analyst their warehouse login):
 tofu output -raw stele_analyst_password
 ```
 
+## Analyst access, demo seed, secret rotation
+
+External analyst/reviewer database access (the opt-in `enable_postgres_proxy` TCP
+proxy), seeding the initial admin (`seed` entrypoint verb), and rotating the
+generated role passwords (`scripts/rotate_role_password.py` + the
+`*_password_override` variables) are covered in
+`docs/verification/m7.6-demo-to-prod.md`, along with the full demo→prod checklist.
+
 ## State holds secrets
 
 The module **generates** all role passwords and the session secret
 (`random_password`), so they live in tofu state. For the demo the state is **local
 and gitignored** (`.gitignore` excludes `*.tfstate*` and `*.tfvars`). Before real
 production or any multi-operator use, move to an encrypted remote backend — this is
-on the same "revisit before real PII" checklist as EU data residency.
+on the same "revisit before real PII" checklist (`docs/verification/m7.6-demo-to-prod.md`)
+as EU data residency. To supply role passwords instead of generating them (rotation
+or a no-secrets-in-state posture), set the `*_password_override` variables.
 
 ## What's validated where
 

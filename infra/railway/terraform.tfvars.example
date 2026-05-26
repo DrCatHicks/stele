@@ -22,3 +22,20 @@ web_subdomain = "stele-demo"
 # postgres_image     = "ghcr.io/railwayapp-templates/postgres-ssl:16"
 # cookie_secure      = true
 # etl_cron_schedule  = "0 6 * * *"   # daily 06:00 UTC; UTC cron expression
+
+# Public Postgres endpoint for analyst/reviewer direct (M3.5) access. OFF by
+# default — a standing public 5432 is a deliberate exposure. Flip on when someone
+# needs warehouse access; `tofu output postgres_proxy` then gives the host:port.
+# enable_postgres_proxy = false
+
+# Operator-supplied secret overrides (rotation / real-prod path). Empty = the
+# module GENERATES the password (the demo default). After rotating a live role
+# with scripts/rotate_role_password.py, set the matching override here to the new
+# value and re-apply, so the services' connection strings track the live role.
+# See docs/verification/m7.6-demo-to-prod.md § Secret rotation. NEVER commit real
+# secrets — terraform.tfvars is gitignored, but treat these as you would any key.
+# admin_password_override              = ""
+# stele_api_password_override          = ""
+# stele_etl_password_override          = ""
+# stele_analyst_password_override      = ""
+# stele_pii_reviewer_password_override = ""

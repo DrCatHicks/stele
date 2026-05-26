@@ -15,20 +15,29 @@ output "postgres_internal_host" {
   value       = "${local.pg_host}:${local.pg_port}"
 }
 
+output "postgres_proxy" {
+  description = "Public host:port of the Postgres TCP proxy for analyst/reviewer direct access, or null when enable_postgres_proxy is false."
+  value       = var.enable_postgres_proxy ? "${railway_tcp_proxy.postgres[0].domain}:${railway_tcp_proxy.postgres[0].proxy_port}" : null
+}
+
+# These read the EFFECTIVE-password locals (override-or-generated), not the raw
+# random_password, so after a rotation (ALTER ROLE + set the matching
+# *_password_override + apply) the output reads back the live password — for the
+# analyst/reviewer group roles the output IS the credential-delivery path.
 output "admin_database_password" {
   description = "Postgres owner (admin) password — used by the migrate/bootstrap path."
-  value       = random_password.admin.result
+  value       = local.admin_password
   sensitive   = true
 }
 
 output "stele_analyst_password" {
   description = "Password for the stele_analyst role (direct read access to marts)."
-  value       = random_password.stele_analyst.result
+  value       = local.stele_analyst_password
   sensitive   = true
 }
 
 output "stele_pii_reviewer_password" {
   description = "Password for the stele_pii_reviewer role (direct read access to pii)."
-  value       = random_password.stele_pii_reviewer.result
+  value       = local.stele_pii_reviewer_password
   sensitive   = true
 }

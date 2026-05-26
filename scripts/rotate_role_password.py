@@ -113,10 +113,17 @@ def _open_secret_sink() -> TextIO:
     fails closed before the ALTER. Override with ``STELE_ROTATE_SECRET_SINK`` for
     non-interactive use (tests). Opened up front so we never change a password we
     then can't show.
+
+    Opened via ``os.open`` with mode 0600 so that when the sink is a *regular file*
+    (a redirected path, not the default terminal) it's created owner-only — a
+    redirected secret shouldn't be world-readable. The mode is a no-op for an
+    existing path like /dev/tty or /dev/null (it only applies on creation), which
+    is exactly the common case.
     """
     sink = os.environ.get(_SECRET_SINK_ENV, "/dev/tty")
     try:
-        return open(sink, "w")  # caller closes; terminal/device path, not a project file
+        fd = os.open(sink, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        return os.fdopen(fd, "w")  # caller closes
     except OSError as exc:
         raise RotationError(
             f"cannot open {sink!r} to show the new secret: {exc}. Run in an interactive "
@@ -129,22 +136,36 @@ def _role_exists(conn: psycopg.Connection, role: str) -> bool:
     return row is not None
 
 
-def rotate(role: str, password: str, conninfo: str) -> None:
-    """ALTER the role's password. Raises RotationError if the role doesn't exist."""
+def rotate(role: str, password: str, conninfo: str, secret_out: TextIO, origin: str) -> None:
+    """ALTER the role's password and hand the new secret to ``secret_out``, atomically.
+
+    Raises RotationError if the role doesn't exist. The secret is written AND
+    flushed *inside* the transaction, before commit: if delivering it fails (full
+    disk, broken pipe, a /dev/tty that went away), the transaction rolls back and
+    the live password is left unchanged — so we never change a password the
+    operator didn't actually receive. The reverse (write succeeds, commit fails)
+    is harmless: the role is unchanged and the operator just re-runs.
+    """
     with psycopg.connect(conninfo) as conn:
         if not _role_exists(conn, role):
             raise RotationError(
                 f"role {role!r} does not exist on this database. Rotatable deployment "
                 f"roles: {', '.join(DEPLOYMENT_ROLES)} (plus the admin/owner role by name)."
             )
-        # ALTER ROLE PASSWORD is its own statement (no enclosing BEGIN needed); the
-        # identifier is quoted and the password passed as a literal, like the
-        # provisioning CLI's rotate.
-        conn.execute(
-            sql.SQL("ALTER ROLE {role} WITH PASSWORD {pw}").format(
-                role=sql.Identifier(role), pw=sql.Literal(password)
+        with conn.transaction():
+            # The identifier is quoted and the password passed as a literal, like
+            # the provisioning CLI's rotate — injection-safe.
+            conn.execute(
+                sql.SQL("ALTER ROLE {role} WITH PASSWORD {pw}").format(
+                    role=sql.Identifier(role), pw=sql.Literal(password)
+                )
             )
-        )
+            # Deliver the secret to the terminal sink (/dev/tty by default), not
+            # storage — CodeQL clear-text-storage here is a false positive, same as
+            # the provisioning CLI (dismissed on the PR). flush() before the commit
+            # so a failed write aborts the ALTER rather than orphaning the password.
+            secret_out.write(f"new password for {role} ({origin}): {password}\n")
+            secret_out.flush()
 
 
 def cmd_rotate(args: argparse.Namespace) -> int:
@@ -165,16 +186,14 @@ def cmd_rotate(args: argparse.Namespace) -> int:
 
     supplied = os.environ.get(_NEW_PASSWORD_ENV)
     password = supplied if supplied else generate_password()
+    origin = "supplied" if supplied else "generated"
 
     # Fail closed before the ALTER if there's nowhere safe to show the secret.
     secret_out = _open_secret_sink()
     try:
-        rotate(role, password, _conninfo())
-        # Terminal sink (/dev/tty), not storage — CodeQL clear-text-storage here is
-        # a false positive, same as the provisioning CLI (dismissed on the PR). The
-        # operator must see the one-time password; the terminal is the safest channel.
-        origin = "supplied" if supplied else "generated"
-        secret_out.write(f"new password for {role} ({origin}): {password}\n")
+        # rotate() writes the secret inside the transaction, before commit, so the
+        # ALTER and the operator seeing the password succeed or fail together.
+        rotate(role, password, _conninfo(), secret_out, origin)
     finally:
         secret_out.close()
 

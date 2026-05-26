@@ -21,3 +21,4 @@ web_subdomain = "stele-demo"
 # workspace_id       = ""   # default workspace of the token
 # postgres_image     = "ghcr.io/railwayapp-templates/postgres-ssl:16"
 # cookie_secure      = true
+# etl_cron_schedule  = "0 6 * * *"   # daily 06:00 UTC; UTC cron expression

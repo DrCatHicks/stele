@@ -15,6 +15,7 @@ Two layers:
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import uuid
 from pathlib import Path
@@ -72,6 +73,81 @@ def test_metadata_helpers_return_values() -> None:
     sha = runner.git_sha()
     assert sha is not None
     assert len(sha) == 40
+
+
+def test_git_sha_falls_back_to_railway_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With no git binary on PATH, provenance falls back to the build-arg GIT_SHA,
+    then to Railway's auto-injected RAILWAY_GIT_COMMIT_SHA (the cron service)."""
+
+    def _no_git(*_args: object, **_kwargs: object) -> object:
+        raise FileNotFoundError("git not on PATH")
+
+    monkeypatch.setattr("api.etl.runner.subprocess.run", _no_git)
+    monkeypatch.delenv("GIT_SHA", raising=False)
+    monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", "railwaysha123")
+    assert runner.git_sha() == "railwaysha123"
+
+    # GIT_SHA (the image build-arg) wins over the Railway var when both are present.
+    monkeypatch.setenv("GIT_SHA", "buildargsha")
+    assert runner.git_sha() == "buildargsha"
+
+
+# A minimal but faithfully-shaped dbt run_results.json (one success, one failure).
+_RUN_RESULTS_DOC = {
+    "metadata": {"dbt_schema_version": "https://schemas.getdbt.com/dbt/run-results/v6.json"},
+    "elapsed_time": 1.5,
+    "args": {"which": "build", "profiles_dir": "."},
+    "results": [
+        {
+            "unique_id": "model.survey_engine.dim_question",
+            "status": "success",
+            "execution_time": 0.42,
+            "message": "INSERT 0 16",
+            "adapter_response": {"_message": "INSERT 0 16", "rows_affected": 16},
+        },
+        {
+            "unique_id": "test.survey_engine.shown_set_integrity",
+            "status": "fail",
+            "execution_time": 0.1,
+            "message": "Got 3 results, configured to fail if != 0",
+            "adapter_response": {},
+        },
+    ],
+}
+
+
+def test_summarize_run_results_extracts_compact_per_node(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "run_results.json").write_text(json.dumps(_RUN_RESULTS_DOC))
+
+    summary = runner.summarize_run_results(tmp_path)
+
+    assert summary is not None
+    assert summary["elapsed_time"] == 1.5
+    assert summary["dbt_schema_version"].endswith("run-results/v6.json")
+    assert summary["results"] == [
+        {
+            "unique_id": "model.survey_engine.dim_question",
+            "status": "success",
+            "execution_time": 0.42,
+            "message": "INSERT 0 16",
+            "rows_affected": 16,
+        },
+        {
+            "unique_id": "test.survey_engine.shown_set_integrity",
+            "status": "fail",
+            "execution_time": 0.1,
+            "message": "Got 3 results, configured to fail if != 0",
+            "rows_affected": None,
+        },
+    ]
+
+
+def test_summarize_run_results_missing_file_returns_none(tmp_path: Path) -> None:
+    # A build that fails before dbt emits run_results.json (e.g. missing binary):
+    # losing the summary must never crash the run-finish bookkeeping.
+    assert runner.summarize_run_results(tmp_path) is None
 
 
 def test_resolve_conninfo_strips_sqlalchemy_suffix(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -134,6 +210,12 @@ def test_execute_run_success_records_row(tmp_path: Path, monkeypatch: pytest.Mon
     # Keep artifact archival out of the repo tree during tests.
     monkeypatch.setattr(runner, "DBT_DIR", tmp_path)
     monkeypatch.setattr(runner, "ARTIFACTS_DIR", tmp_path / "etl_artifacts")
+    # Stand in for the run_results.json a real `dbt build` would emit, so the
+    # durable per-model summary (M7.5) is exercised end-to-end into the column.
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "run_results.json").write_text(json.dumps(_RUN_RESULTS_DOC))
+
     with psycopg.connect(runner.resolve_conninfo()) as conn:
         result = runner.execute_run(
             conn,
@@ -146,20 +228,26 @@ def test_execute_run_success_records_row(tmp_path: Path, monkeypatch: pytest.Mon
         row = conn.execute(
             """
             SELECT status, source_row_counts, mart_row_counts, completed_at,
-                   dbt_version, git_sha
+                   dbt_version, git_sha, dbt_run_results
             FROM ops.etl_runs WHERE run_id = %s
             """,
             (result.run_id,),
         ).fetchone()
 
     assert row is not None
-    status, source_counts, mart_counts, completed_at, dbt_ver, sha = row
+    status, source_counts, mart_counts, completed_at, dbt_ver, sha, dbt_results = row
     assert status == "success"
     assert isinstance(source_counts["app.raw_responses"], int)
     assert isinstance(mart_counts, dict)  # {} before any marts exist; populated after
     assert completed_at is not None
     assert dbt_ver is not None
     assert sha is not None
+    # The parsed run_results summary made it into the durable record (JSONB → dict).
+    assert dbt_results["elapsed_time"] == 1.5
+    assert {r["unique_id"] for r in dbt_results["results"]} == {
+        "model.survey_engine.dim_question",
+        "test.survey_engine.shown_set_integrity",
+    }
 
 
 @requires_db

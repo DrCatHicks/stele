@@ -355,6 +355,7 @@ jobs:
           docker run --rm -e STELE_ENTRYPOINT_PRINT=1 stele:ci web     | grep -q 'uvicorn api.main:app'
           docker run --rm -e STELE_ENTRYPOINT_PRINT=1 stele:ci migrate | grep -q 'alembic upgrade head'
           docker run --rm -e STELE_ENTRYPOINT_PRINT=1 stele:ci etl     | grep -q 'scripts/run_etl.py'
+          docker run --rm -e STELE_ENTRYPOINT_PRINT=1 stele:ci seed    | grep -q 'scripts/bootstrap_admin.py'
 
   infra:
     name: Infra · OpenTofu (fmt + validate)

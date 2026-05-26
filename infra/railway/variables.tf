@@ -80,3 +80,57 @@ variable "etl_cron_schedule" {
   type        = string
   default     = "0 6 * * *"
 }
+
+variable "enable_postgres_proxy" {
+  description = "Expose Postgres to the public internet via a Railway TCP proxy, so analysts/reviewers can connect with their M3.5 per-user credentials from outside the project's private network. Default OFF: a standing public 5432 is a deliberate, documented exposure, flipped on only when someone actually needs direct warehouse access. See docs/verification/m7.6-demo-to-prod.md."
+  type        = bool
+  default     = false
+}
+
+# ---- Operator-supplied secret overrides (rotation / real-prod path) ----------
+#
+# By default every role password is GENERATED (random_password, in state) — the
+# convenient demo path. But because bootstrap_roles.py never re-passwords an
+# existing role (M7.3: re-deploys need no secrets), regenerating the tofu secret
+# alone would NOT change the live Postgres password — it would only update the
+# connection strings, breaking auth. So rotation is a two-step: ALTER ROLE in
+# Postgres (scripts/rotate_role_password.py), then feed the new password back here
+# so the services' connection strings match. A non-empty override wins over the
+# generated value (see locals in main.tf). These also serve the "operator-supplied
+# secrets, never born in state" posture for real production. Empty = generated.
+# See docs/verification/m7.6-demo-to-prod.md § Secret rotation.
+
+variable "admin_password_override" {
+  description = "Operator-supplied admin/owner (postgres) password. Empty = generate one. Set to the value rotate_role_password.py applied, then apply, so the migrate path keeps working."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "stele_api_password_override" {
+  description = "Operator-supplied stele_api password. Empty = generate one. Set to the rotated value so the web runtime connection string matches the live role."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "stele_etl_password_override" {
+  description = "Operator-supplied stele_etl password. Empty = generate one. Set to the rotated value so the ETL cron's connection string + dbt profile match the live role."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "stele_analyst_password_override" {
+  description = "Operator-supplied stele_analyst group-role password. Empty = generate one. Set to the rotated value to keep `tofu output stele_analyst_password` in sync with the live role."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "stele_pii_reviewer_password_override" {
+  description = "Operator-supplied stele_pii_reviewer group-role password. Empty = generate one. Set to the rotated value to keep `tofu output stele_pii_reviewer_password` in sync with the live role."
+  type        = string
+  default     = ""
+  sensitive   = true
+}

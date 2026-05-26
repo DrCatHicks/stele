@@ -75,6 +75,18 @@ def test_etl_runs_the_logged_runner(tmp_path: Path) -> None:
     assert "argv=python scripts/run_etl.py" in result.stdout
 
 
+def test_seed_runs_admin_bootstrap_from_app_root(tmp_path: Path) -> None:
+    # `seed` bootstraps the initial admin; it must run from the app root (so
+    # `import api` resolves), not the api dir like migrate.
+    app_dir = tmp_path / "app"
+    api_dir = tmp_path / "app" / "api"
+    api_dir.mkdir(parents=True)
+    result = _run("seed", app_dir=app_dir, api_dir=api_dir)
+    assert result.returncode == 0
+    assert "argv=python scripts/bootstrap_admin.py" in result.stdout
+    assert f"cwd={app_dir}" in result.stdout
+
+
 def test_trailing_args_pass_through(tmp_path: Path) -> None:
     # `etl -- --select dim_question` must forward the dbt selector untouched.
     result = _run("etl", "--", "--select", "dim_question", app_dir=tmp_path)
@@ -88,6 +100,6 @@ def test_unknown_command_fails_loud(tmp_path: Path) -> None:
     assert "unknown command 'frobnicate'" in result.stderr
 
 
-@pytest.mark.parametrize("verb", ["web", "migrate", "etl"])
+@pytest.mark.parametrize("verb", ["web", "migrate", "etl", "seed"])
 def test_known_verbs_exit_zero_in_print_mode(verb: str, tmp_path: Path) -> None:
     assert _run(verb, app_dir=tmp_path).returncode == 0

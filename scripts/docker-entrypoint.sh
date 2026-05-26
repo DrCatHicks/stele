@@ -7,11 +7,16 @@
 #   web       uvicorn serving the composed app (API under /api + SPA at /)
 #   migrate   alembic upgrade head
 #   etl       the logged dbt build (scripts/run_etl.py)
+#   seed      bootstrap the initial admin operator (scripts/bootstrap_admin.py)
 #
 # Trailing arguments pass through, e.g. `etl -- --select dim_question`.
 #
 # Connection/secret env (supplied by the deploy, not baked in):
 #   web      STELE_DATABASE_URL (stele_api role), STELE_SESSION_SECRET, STELE_COOKIE_SECURE
+#   seed     STELE_DATABASE_URL (stele_api role) + STELE_ADMIN_EMAIL/STELE_ADMIN_PASSWORD.
+#            A one-off (e.g. `railway run … seed`): seeds ONLY the initial admin
+#            login (idempotent), never example surveys — synthetic respondents must
+#            not enter the append-only app.raw_responses of a real instance.
 #   migrate  the admin identity that also bootstraps roles, on
 #            STELE_ADMIN_DATABASE_URL (preferred) or STELE_DATABASE_URL — so a deploy
 #            that runs migrate as a pre-deploy step in the *web* service can keep
@@ -61,8 +66,16 @@ case "$cmd" in
     cd "$APP_DIR"
     set -- python scripts/run_etl.py "$@"
     ;;
+  seed)
+    # Seed the initial admin operator from STELE_ADMIN_EMAIL/STELE_ADMIN_PASSWORD,
+    # as least-privilege stele_api (STELE_DATABASE_URL) — bootstrap_admin only
+    # INSERTs into app.users, which stele_api may do. Idempotent (existing admin
+    # left untouched). Run from the app root so `import api` resolves like dev/CI.
+    cd "$APP_DIR"
+    set -- python scripts/bootstrap_admin.py "$@"
+    ;;
   *)
-    echo "docker-entrypoint: unknown command '$cmd' (expected: web | migrate | etl)" >&2
+    echo "docker-entrypoint: unknown command '$cmd' (expected: web | migrate | etl | seed)" >&2
     exit 64
     ;;
 esac

@@ -42,6 +42,15 @@ pip install pre-commit && pre-commit install
 | Build frontend | `cd frontend && pnpm build` |
 | Rebuild marts | `cd dbt && dbt run --profiles-dir .` |
 
+## Deployment
+
+Railway, via OpenTofu (`infra/railway/`). Start with [`infra/README.md`](infra/README.md)
+for the `tofu apply` path, the Railway CLI prereq, and credential retrieval. Then
+[`docs/verification/m7.6-demo-to-prod.md`](docs/verification/m7.6-demo-to-prod.md)
+covers operating a live instance: seeding the admin, analyst DB access, secret
+rotation, and the demo→production checklist. Deploy-model rationale and the ETL
+cron live in `docs/verification/m7.4-railway.md` and `m7.5-etl-cron.md`.
+
 ## CI
 
 GitHub Actions runs on every PR (`.github/workflows/ci.yml`):

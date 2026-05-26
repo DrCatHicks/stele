@@ -16,12 +16,19 @@ infra/
 
 Prereqs: [OpenTofu](https://opentofu.org) ≥ 1.6, a Railway **workspace/account**
 token (a project token can't create projects), and the Railway GitHub app
-installed on the repo named in `source_repo`.
+installed on the repo named in `source_repo` (install at
+`https://github.com/apps/railway-app/installations/new`, or via Railway's GitHub
+integration — it grants Railway access to build the web/ETL services from source).
+
+The provider reads its auth from the `RAILWAY_TOKEN` env var. Keep it in a
+gitignored `.env` you source, rather than a bare `export` that dies with the shell
+(Railway shows account tokens only once) — see `.env.example`:
 
 ```bash
-export RAILWAY_TOKEN=...                 # workspace/account token
 cd infra/railway
-cp terraform.tfvars.example terraform.tfvars   # edit as needed
+cp .env.example .env                            # paste your workspace token, gitignored
+cp terraform.tfvars.example terraform.tfvars    # edit as needed
+source .env                                     # exports RAILWAY_TOKEN
 tofu init
 tofu plan
 tofu apply
@@ -41,6 +48,36 @@ Retrieve a generated credential (e.g. to hand an analyst their warehouse login):
 
 ```bash
 tofu output -raw stele_analyst_password
+```
+
+## Operating the deployment — the Railway CLI (separate from tofu)
+
+`tofu` provisions; **operating** the running deployment (seeding the admin, one-off
+shells into a service) needs the [Railway CLI](https://docs.railway.com/guides/cli),
+which is a separate install and a separate auth from the provider:
+
+```bash
+npm i -g @railway/cli      # or: brew install railway
+railway login              # browser auth, cached in ~/.railway (preferred for `ssh`)
+railway link               # pick this project → environment → service
+```
+
+**Tokens differ between the two tools — this is a footgun.** The OpenTofu provider
+reads a workspace/account token from `RAILWAY_TOKEN`. The **CLI** treats
+`RAILWAY_TOKEN` as a *project* token and reads an account token from
+`RAILWAY_API_TOKEN` instead — so a workspace token left in `RAILWAY_TOKEN` makes
+the CLI fail with "Invalid RAILWAY_TOKEN". Either `railway login` (browser, ignores
+the env var) or export the account token as `RAILWAY_API_TOKEN` for the CLI. Don't
+`source infra/railway/.env` in a shell where you run the CLI — keep tofu and CLI in
+separate shells.
+
+To run a command **inside** a running service's container (where the entrypoint
+script exists and `postgres.railway.internal` resolves), use `railway ssh`, **not**
+`railway run` — `railway run` executes locally with the service's env injected, so
+it can't reach the private-network Postgres or the in-image entrypoint:
+
+```bash
+railway ssh --service web        # drops into a shell in the web container
 ```
 
 ## Analyst access, demo seed, secret rotation

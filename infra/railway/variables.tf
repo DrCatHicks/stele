@@ -74,3 +74,9 @@ variable "cookie_secure" {
   type        = bool
   default     = true
 }
+
+variable "etl_cron_schedule" {
+  description = "Cron expression (UTC) for the ETL service's scheduled `dbt build`. A full-refresh build at demo scale (10-20k respondents) is cheap; default is once daily at 06:00 UTC."
+  type        = string
+  default     = "0 6 * * *"
+}

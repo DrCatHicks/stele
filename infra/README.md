@@ -9,7 +9,7 @@ caller's intent, not the resources.
 
 ```
 infra/
-  railway/        Railway: project + managed Postgres + web service + secrets
+  railway/        Railway: project + managed Postgres + web + ETL cron + secrets
 ```
 
 ## Railway — apply
@@ -28,10 +28,14 @@ tofu apply
 ```
 
 `apply` creates the project, a Postgres service (Railway's SSL Postgres image on a
-persistent volume), and a web service Railway builds from the repo Dockerfile. On
-the web service's first deploy, the `migrate` pre-deploy command (see the repo-root
-`railway.json`) bootstraps the four `stele_*` roles from the generated passwords and
-runs `alembic upgrade head` as the admin identity, before the web process starts.
+persistent volume), a web service Railway builds from the repo Dockerfile, and an
+ETL **cron** service (the same image, started on the `etl` verb on
+`etl_cron_schedule`, default daily 06:00 UTC). On the web service's first deploy,
+the `migrate` pre-deploy command (see the repo-root `railway.json`) bootstraps the
+four `stele_*` roles from the generated passwords and runs `alembic upgrade head`
+as the admin identity, before the web process starts. The cron service connects
+only as least-privilege `stele_etl`; see `docs/verification/m7.5-etl-cron.md` for
+its config (`railway.etl.json`) and the ephemeral-FS artifact handling.
 
 Retrieve a generated credential (e.g. to hand an analyst their warehouse login):
 

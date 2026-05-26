@@ -10,7 +10,15 @@ run"). One invocation = one row in ``ops.etl_runs``:
 3. Run ``dbt build``.
 4. Archive ``target/manifest.json`` + ``target/run_results.json`` to
    ``dbt/etl_artifacts/<run_id>/`` (the row is the index into that dir).
-5. UPDATE the row to ``success`` (with per-table marts row counts) or ``failed``.
+5. UPDATE the row to ``success`` (with per-table marts row counts) or ``failed``,
+   plus a compact per-model summary parsed from run_results.json.
+
+Artifact durability (M7.5). On Railway, ETL runs as a cron service whose container
+filesystem is **ephemeral** — the on-disk archive from step 4 is discarded when the
+run exits. ``ops.etl_runs`` (managed Postgres) is therefore the durable record, so
+the debuggable part of run_results.json (per-node status / timing / failure) is
+pulled into the ``dbt_run_results`` column at step 5; the full manifest stays
+on-disk only (large, reconstructible from the code at ``git_sha``).
 
 The runner connects as ``stele_etl`` — the same role dbt uses — so it reuses the
 existing least-privilege grants (SELECT on the declared sources, ownership of
@@ -27,6 +35,7 @@ sufficient instead of hiding behind dev privilege.
 from __future__ import annotations
 
 import importlib.metadata
+import json
 import os
 import shutil
 import subprocess
@@ -94,7 +103,10 @@ def git_sha() -> str | None:
         )
         return result.stdout.strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
-        return os.environ.get("GIT_SHA") or None
+        # GIT_SHA is the image build-arg fallback (M7.2); RAILWAY_GIT_COMMIT_SHA is
+        # injected automatically into repo-built Railway services (the cron service),
+        # so a run there keeps non-null provenance without git or a baked build-arg.
+        return os.environ.get("GIT_SHA") or os.environ.get("RAILWAY_GIT_COMMIT_SHA") or None
 
 
 def declared_sources(path: Path = SOURCES_YML) -> list[str]:
@@ -136,6 +148,46 @@ def read_source_counts(conn: psycopg.Connection[Any], sources: list[str]) -> dic
     return counts
 
 
+def summarize_run_results(dbt_dir: Path | None = None) -> dict[str, Any] | None:
+    """Compact, durable summary of dbt's ``target/run_results.json`` (NFR-2).
+
+    On Railway the cron container's filesystem is ephemeral, so the on-disk
+    artifact archive is discarded when the run exits. This pulls the debuggable
+    part — per-node status, timing, and any failure message — into a small dict
+    the runner stores in ``ops.etl_runs.dbt_run_results`` (managed Postgres, the
+    durable record). The full manifest stays on disk only: it's large and
+    reconstructible from the code at ``git_sha``.
+
+    Returns None when run_results.json is absent (a build that failed before dbt
+    emitted it, e.g. a missing binary) or unparseable — losing this detail must
+    never mask the run's real outcome (CLAUDE.md: archival is best-effort).
+    """
+    # Resolve the module global at call time so tests can monkeypatch DBT_DIR.
+    src = (dbt_dir or DBT_DIR) / "target" / "run_results.json"
+    try:
+        doc = json.loads(src.read_text())
+    except (OSError, ValueError):
+        return None
+
+    results = []
+    for node in doc.get("results", []):
+        adapter = node.get("adapter_response") or {}
+        results.append(
+            {
+                "unique_id": node.get("unique_id"),
+                "status": node.get("status"),
+                "execution_time": node.get("execution_time"),
+                "message": node.get("message"),
+                "rows_affected": adapter.get("rows_affected"),
+            }
+        )
+    return {
+        "elapsed_time": doc.get("elapsed_time"),
+        "dbt_schema_version": doc.get("metadata", {}).get("dbt_schema_version"),
+        "results": results,
+    }
+
+
 def read_mart_counts(conn: psycopg.Connection[Any]) -> dict[str, int]:
     """Rows per base table in the marts schema (empty before the first build)."""
     rows = conn.execute(
@@ -175,14 +227,20 @@ def record_run_finish(
     run_id: uuid.UUID,
     status: str,
     mart_counts: dict[str, int] | None,
+    dbt_results: dict[str, Any] | None = None,
 ) -> None:
     conn.execute(
         """
         UPDATE ops.etl_runs
-        SET status = %s, completed_at = now(), mart_row_counts = %s
+        SET status = %s, completed_at = now(), mart_row_counts = %s, dbt_run_results = %s
         WHERE run_id = %s
         """,
-        (status, Jsonb(mart_counts) if mart_counts is not None else None, run_id),
+        (
+            status,
+            Jsonb(mart_counts) if mart_counts is not None else None,
+            Jsonb(dbt_results) if dbt_results is not None else None,
+            run_id,
+        ),
     )
     conn.commit()
 
@@ -251,14 +309,17 @@ def execute_run(
     try:
         returncode = dbt_build(extra_args)
         artifacts_dir = archive_artifacts(run_id)
+        # Capture the per-model summary for both outcomes — it's most valuable on a
+        # failure (which node errored, with what message) and durable in Postgres
+        # after the on-disk archive is gone (M7.5: ephemeral Railway cron FS).
+        dbt_results = summarize_run_results()
         if returncode == 0:
-            record_run_finish(conn, run_id, "success", read_mart_counts(conn))
+            record_run_finish(conn, run_id, "success", read_mart_counts(conn), dbt_results)
             status = "success"
         else:
             # Leave mart_row_counts null: a failed build's marts are not a
-            # trustworthy snapshot. status='failed' + the archived run_results.json
-            # tell the story.
-            record_run_finish(conn, run_id, "failed", None)
+            # trustworthy snapshot. status='failed' + dbt_run_results tell the story.
+            record_run_finish(conn, run_id, "failed", None, dbt_results)
             status = "failed"
     except Exception:
         # Best-effort: mark the run failed, then let the original error propagate.

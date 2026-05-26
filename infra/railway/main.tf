@@ -13,8 +13,9 @@
 # never holds more than stele_api. The admin connection string is present in the web
 # service's env (the pre-deploy needs it) — a known tradeoff, see docs/verification/m7.4-railway.md.
 #
-# ETL (a cron service running the `etl` verb) and an external analyst TCP proxy are
-# deferred to M7.5 / M7.6.
+# ETL runs as a cron service (M7.5) — the same image, started on the `etl` verb on
+# a schedule (var.etl_cron_schedule), connecting as least-privilege stele_etl. An
+# external analyst TCP proxy is deferred to M7.6.
 
 # ---- Generated secrets -------------------------------------------------------
 # DB passwords are alphanumeric (special = false) so they need no URL-escaping in
@@ -59,6 +60,9 @@ locals {
   # app uses it directly; bootstrap_roles.py strips the tag for libpq.
   admin_url     = "postgresql+psycopg://postgres:${random_password.admin.result}@${local.pg_host}:${local.pg_port}/${var.database_name}"
   stele_api_url = "postgresql+psycopg://stele_api:${random_password.stele_api.result}@${local.pg_host}:${local.pg_port}/${var.database_name}"
+  # The ETL cron service's run-log writes (ops.etl_runs) go through this; dbt itself
+  # reads the DBT_* vars below. Both connect as least-privilege stele_etl.
+  stele_etl_url = "postgresql+psycopg://stele_etl:${random_password.stele_etl.result}@${local.pg_host}:${local.pg_port}/${var.database_name}"
 }
 
 # ---- Project + default environment -------------------------------------------
@@ -180,6 +184,68 @@ resource "railway_variable_collection" "web" {
       name  = "PORT"
       value = "8000"
     },
+  ]
+}
+
+# ---- ETL (cron service running the `etl` verb) -------------------------------
+#
+# Same image as web, built from the repo, but started on the `etl` verb on a
+# schedule. Railway runs the container at var.etl_cron_schedule and lets it exit;
+# the run is logged to ops.etl_runs in managed Postgres (durable), since the
+# container filesystem — and the on-disk dbt artifact archive — are ephemeral.
+#
+# This service points at its OWN config file (railway.etl.json), not web's
+# railway.json: it must NOT inherit web's healthcheck or migrate pre-deploy, and
+# its start command overrides the image ENTRYPOINT to dispatch `etl`. (Railway's
+# custom start command replaces the ENTRYPOINT in exec form — same gotcha M7.4's
+# migrate pre-deploy handled — so railway.etl.json gives the full
+# `bash docker-entrypoint.sh etl` invocation.) Migrations stay web's pre-deploy
+# job; the cron connects only as least-privilege stele_etl and never bootstraps.
+resource "railway_service" "etl" {
+  name               = "etl"
+  project_id         = railway_project.stele.id
+  source_repo        = var.source_repo
+  source_repo_branch = var.source_repo_branch
+  config_path        = "railway.etl.json"
+  cron_schedule      = var.etl_cron_schedule
+
+  regions = [{
+    region       = var.region
+    num_replicas = 1
+  }]
+}
+
+resource "railway_variable_collection" "etl" {
+  environment_id = railway_project.stele.default_environment.id
+  service_id     = railway_service.etl.id
+
+  variables = [
+    # The runner's ops.etl_runs writes connect as least-privilege stele_etl.
+    {
+      name  = "STELE_ETL_DATABASE_URL"
+      value = local.stele_etl_url
+    },
+    # dbt's postgres profile (dbt/profiles.yml) reads these; same stele_etl role.
+    # The profile's port is fixed at 5432, matching Railway's internal Postgres.
+    {
+      name  = "DBT_HOST"
+      value = local.pg_host
+    },
+    {
+      name  = "DBT_USER"
+      value = "stele_etl"
+    },
+    {
+      name  = "DBT_PASSWORD"
+      value = random_password.stele_etl.result
+    },
+    {
+      name  = "DBT_DBNAME"
+      value = var.database_name
+    },
+    # GIT_SHA is not set here on purpose: Railway auto-injects
+    # RAILWAY_GIT_COMMIT_SHA into repo-built services, which the runner reads for
+    # ops.etl_runs provenance (api/etl/runner.py git_sha()).
   ]
 }
 

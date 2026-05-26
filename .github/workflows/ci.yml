@@ -213,3 +213,43 @@ jobs:
         env:
           STELE_ETL_DATABASE_URL: postgresql://stele_etl:dev@localhost:5432/stele
         run: uv run python scripts/run_etl.py
+
+  docker-build:
+    name: Docker · build production image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the production image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: stele:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke-test composition (runtimes + assets, no DB)
+        # The image is mostly-Python on a Node base because the publish gate runs
+        # the Node round-trip oracle at request time. Prove both runtimes, dbt +
+        # alembic, the built SPA, the oracle's survey-core, and that the app
+        # actually imports (which also resolves STELE_FRONTEND_DIST). No DB needed:
+        # create_async_engine is lazy, so `import api.main` doesn't connect.
+        run: |
+          docker run --rm --entrypoint bash stele:ci -c '
+            set -euo pipefail
+            python --version
+            node --version
+            uvicorn --version
+            alembic --version
+            dbt --version
+            test -f /app/frontend/dist/index.html
+            test -d /app/frontend/node_modules/survey-core
+            test -f /app/frontend/scripts/roundTrip.mjs
+            python -c "import api.main"
+          '
+      - name: Entrypoint dispatch resolves (print mode)
+        run: |
+          set -euo pipefail
+          docker run --rm -e STELE_ENTRYPOINT_PRINT=1 stele:ci web     | grep -q 'uvicorn api.main:app'
+          docker run --rm -e STELE_ENTRYPOINT_PRINT=1 stele:ci migrate | grep -q 'alembic upgrade head'
+          docker run --rm -e STELE_ENTRYPOINT_PRINT=1 stele:ci etl     | grep -q 'scripts/run_etl.py'

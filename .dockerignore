@@ -1,0 +1,34 @@
+# Keep the build context small and prevent stale/host artifacts from leaking into
+# the image. The SPA bundle and frontend node_modules are rebuilt in the
+# frontend-build stage, so the host copies are excluded here.
+
+.git
+.github
+.devcontainer
+
+# Python envs + caches
+.venv
+**/__pycache__
+*.pyc
+.mypy_cache
+.ruff_cache
+.pytest_cache
+
+# Node — rebuilt in-image
+frontend/node_modules
+frontend/dist
+.pnpm-store
+**/node_modules
+
+# dbt generated output (the image ships the project, not prior run output)
+dbt/target
+dbt/logs
+dbt/dbt_packages
+dbt/etl_artifacts
+
+# Tooling / editor / docs not needed at runtime
+.claude
+docs
+patterns
+*.md
+.DS_Store

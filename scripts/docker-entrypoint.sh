@@ -12,7 +12,10 @@
 #
 # Connection/secret env (supplied by the deploy, not baked in):
 #   web      STELE_DATABASE_URL (stele_api role), STELE_SESSION_SECRET, STELE_COOKIE_SECURE
-#   migrate  STELE_DATABASE_URL (the admin identity that also bootstraps roles)
+#   migrate  STELE_DATABASE_URL (the admin identity that also bootstraps roles);
+#            STELE_{API,ETL,ANALYST,PII_REVIEWER}_PASSWORD on the FIRST deploy so
+#            bootstrap_roles.py can create the four roles (re-deploys need none);
+#            STELE_SKIP_BOOTSTRAP=1 to skip when roles are managed out of band
 #   etl      DBT_HOST/DBT_USER/DBT_PASSWORD/DBT_DBNAME + STELE_ETL_DATABASE_URL;
 #            GIT_SHA for run provenance (no git binary in the image — baked at build)
 set -euo pipefail
@@ -30,6 +33,17 @@ case "$cmd" in
     set -- uvicorn api.main:app --host 0.0.0.0 --port "$PORT" "$@"
     ;;
   migrate)
+    # Bootstrap roles, schemas, and grants as THIS (admin) identity *before*
+    # migrating, so the grant SQL's ALTER DEFAULT PRIVILEGES — which is
+    # grantor-specific — reaches the tables alembic creates in the same run
+    # (bootstrap-er must equal migrator). Idempotent and prod-only; skipped in the
+    # print-mode test hook (no DB) and via STELE_SKIP_BOOTSTRAP=1 when roles are
+    # managed out of band. Runs from the app root: bootstrap_roles.py reads the
+    # shared grant SQL by a repo-relative path. set -e fails the migrate closed if
+    # bootstrap fails, before any schema change.
+    if [[ -z "${STELE_ENTRYPOINT_PRINT:-}" && "${STELE_SKIP_BOOTSTRAP:-}" != "1" ]]; then
+      ( cd "$APP_DIR" && python scripts/bootstrap_roles.py )
+    fi
     # alembic.ini sets script_location via %(here)s (absolute), so cwd only
     # affects prepend_sys_path; cd into api/ to mirror the dev/CI invocation.
     cd "$API_DIR"

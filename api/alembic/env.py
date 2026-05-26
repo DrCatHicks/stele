@@ -8,7 +8,12 @@ config = context.config
 
 # Connection URL comes from the environment so the same migrations run in dev,
 # CI, and prod without editing alembic.ini. Falls back to whatever the ini holds.
-_db_url = os.environ.get("STELE_DATABASE_URL")
+# STELE_ADMIN_DATABASE_URL takes precedence over STELE_DATABASE_URL so a deploy can
+# run migrations as a distinct admin identity while the web process keeps the
+# least-privilege stele_api connection on STELE_DATABASE_URL — the same precedence
+# scripts/bootstrap_roles.py uses, so bootstrap-er == migrator. Dev/CI set only
+# STELE_DATABASE_URL, so the fallback leaves them unchanged.
+_db_url = os.environ.get("STELE_ADMIN_DATABASE_URL") or os.environ.get("STELE_DATABASE_URL")
 if _db_url:
     config.set_main_option("sqlalchemy.url", _db_url)
 

@@ -40,6 +40,7 @@ _spec.loader.exec_module(br)
 
 
 def test_conninfo_requires_url_without_optin(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("STELE_ADMIN_DATABASE_URL", raising=False)
     monkeypatch.delenv("STELE_DATABASE_URL", raising=False)
     monkeypatch.delenv("STELE_ALLOW_DEV_FALLBACK", raising=False)
     with pytest.raises(br.BootstrapError):
@@ -47,14 +48,33 @@ def test_conninfo_requires_url_without_optin(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_conninfo_dev_fallback_is_explicit_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("STELE_ADMIN_DATABASE_URL", raising=False)
     monkeypatch.delenv("STELE_DATABASE_URL", raising=False)
     monkeypatch.setenv("STELE_ALLOW_DEV_FALLBACK", "1")
     assert br._conninfo() == br._DEV_FALLBACK_URL
 
 
 def test_conninfo_strips_sqlalchemy_driver_tag(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("STELE_ADMIN_DATABASE_URL", raising=False)
     monkeypatch.setenv("STELE_DATABASE_URL", "postgresql+psycopg://u:p@h:5432/db")
     assert br._conninfo() == "postgresql://u:p@h:5432/db"
+
+
+def test_conninfo_prefers_admin_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    # On a Railway-style deploy the web service carries both: STELE_DATABASE_URL is
+    # the least-privilege stele_api connection the web process uses, and the
+    # pre-deploy migrate must instead reach the admin identity. The admin var wins.
+    monkeypatch.setenv("STELE_DATABASE_URL", "postgresql://stele_api:p@h:5432/db")
+    monkeypatch.setenv("STELE_ADMIN_DATABASE_URL", "postgresql://admin:s@h:5432/db")
+    assert br._conninfo() == "postgresql://admin:s@h:5432/db"
+
+
+def test_conninfo_falls_back_to_database_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Dev/CI set only STELE_DATABASE_URL (one admin identity); the fallback keeps
+    # bootstrap-er == migrator there without any new env.
+    monkeypatch.delenv("STELE_ADMIN_DATABASE_URL", raising=False)
+    monkeypatch.setenv("STELE_DATABASE_URL", "postgresql://admin:s@h:5432/db")
+    assert br._conninfo() == "postgresql://admin:s@h:5432/db"
 
 
 # --- unit: fail-closed when a role must be created but its password is absent ----

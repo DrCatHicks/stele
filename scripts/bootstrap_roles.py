@@ -13,10 +13,18 @@ owner role, so this script reproduces that bootstrap over an ordinary connection
   2. apply ``02-schemas-and-grants.sql`` VERBATIM (the single-sourced grant
      logic), so dev, CI, and prod can never drift on who-can-touch-what.
 
-Run as the SAME admin identity that then runs ``alembic upgrade head``
-(``STELE_DATABASE_URL``): ALTER DEFAULT PRIVILEGES is grantor-specific, so the
-grants only reach migration-created tables if bootstrap-er == migrator. The
-``migrate`` verb of scripts/docker-entrypoint.sh chains the two for this reason.
+Run as the SAME admin identity that then runs ``alembic upgrade head``: ALTER
+DEFAULT PRIVILEGES is grantor-specific, so the grants only reach migration-created
+tables if bootstrap-er == migrator. The ``migrate`` verb of
+scripts/docker-entrypoint.sh chains the two for this reason.
+
+Connection precedence: ``STELE_ADMIN_DATABASE_URL`` if set, else
+``STELE_DATABASE_URL``. The two split apart in a Railway-style deploy where one
+service runs both the web process (least-privilege ``stele_api`` on
+``STELE_DATABASE_URL``) and a pre-deploy ``migrate`` (the admin identity on
+``STELE_ADMIN_DATABASE_URL``); Alembic's env.py resolves the same precedence so
+bootstrap-er still equals migrator. Dev/CI set only ``STELE_DATABASE_URL`` (one
+admin identity), so the fallback keeps them unchanged.
 
 Under a non-superuser admin, the grant SQL's ``ALTER DEFAULT PRIVILEGES FOR ROLE
 stele_etl`` (so the analyst can read what dbt creates) requires the admin to hold
@@ -30,7 +38,7 @@ Connection. ``STELE_DATABASE_URL`` must be set, or the run fails — a privilege
 bootstrap must not guess where to connect. For local dev against the container
 superuser, opt into the fallback explicitly with ``STELE_ALLOW_DEV_FALLBACK=1``.
 
-Run:  STELE_DATABASE_URL=... STELE_API_PASSWORD=... STELE_ETL_PASSWORD=... \
+Run:  STELE_ADMIN_DATABASE_URL=... STELE_API_PASSWORD=... STELE_ETL_PASSWORD=... \
         STELE_ANALYST_PASSWORD=... STELE_PII_REVIEWER_PASSWORD=... \
         uv run python scripts/bootstrap_roles.py
 """
@@ -65,6 +73,13 @@ _GRANTS_SQL = (
 _DEV_FALLBACK_URL = "postgresql://stele_dev:dev@localhost:5432/stele"
 _FALLBACK_FLAG = "STELE_ALLOW_DEV_FALLBACK"
 
+# Admin connection, in precedence order. STELE_ADMIN_DATABASE_URL lets a deploy
+# that runs migrate as a pre-deploy step (same service as the web process) carry a
+# distinct admin identity, while STELE_DATABASE_URL stays the least-privilege
+# stele_api connection the web process uses at runtime. Falls back to
+# STELE_DATABASE_URL so dev/CI (one admin identity) need no new env.
+_ADMIN_URL_ENVS = ("STELE_ADMIN_DATABASE_URL", "STELE_DATABASE_URL")
+
 
 class BootstrapError(Exception):
     """A precondition for bootstrapping is missing (URL, secret, privilege)."""
@@ -73,17 +88,19 @@ class BootstrapError(Exception):
 def _conninfo() -> str:
     """Resolve the admin libpq conninfo, stripping any SQLAlchemy driver tag.
 
+    Prefers STELE_ADMIN_DATABASE_URL, then STELE_DATABASE_URL (see _ADMIN_URL_ENVS).
     Required, with the same explicit dev opt-in as the provisioning CLI: a
     privileged bootstrap must not silently default to a hard-coded dev superuser,
     or a missing/misspelled env var would bootstrap into the wrong database.
     """
-    url = os.environ.get("STELE_DATABASE_URL")
+    url = next((v for v in (os.environ.get(e) for e in _ADMIN_URL_ENVS) if v), None)
     if url is None:
         if os.environ.get(_FALLBACK_FLAG, "").strip().lower() not in {"1", "true", "yes"}:
             raise BootstrapError(
-                "STELE_DATABASE_URL is not set. Point it at the admin identity that also "
-                "runs migrations (CREATEROLE + owner of the target database). To use the "
-                f"local dev superuser fallback, opt in explicitly with {_FALLBACK_FLAG}=1."
+                "No admin connection set (STELE_ADMIN_DATABASE_URL or STELE_DATABASE_URL). "
+                "Point one at the admin identity that also runs migrations (CREATEROLE + "
+                "owner of the target database). To use the local dev superuser fallback, "
+                f"opt in explicitly with {_FALLBACK_FLAG}=1."
             )
         print(
             f"{_FALLBACK_FLAG} set; using the dev superuser fallback ({_DEV_FALLBACK_URL}). "

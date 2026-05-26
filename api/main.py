@@ -19,8 +19,11 @@ import os
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
 from sqlalchemy import text
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import Response
+from starlette.staticfiles import StaticFiles
+from starlette.types import Scope
 
 from api.auth.provisioning_router import router as db_credentials_router
 from api.auth.router import router as auth_router
@@ -55,30 +58,36 @@ def create_api_app() -> FastAPI:
     return api
 
 
-def _serve_spa(root: FastAPI, dist_dir: Path) -> None:
-    """Serve the built SPA from ``dist_dir`` for any non-``/api`` GET.
+class _SpaStaticFiles(StaticFiles):
+    """StaticFiles that falls back to index.html on a 404.
 
-    A real built asset (``/assets/index-*.js``, ``/favicon.ico``) is returned
-    when the file exists; otherwise ``index.html`` is handed back so client-side
-    routes (e.g. a hard refresh on ``/admin/pii-review``) resolve. The ``/api``
-    mount is registered first, so it always wins over this catch-all."""
+    Built assets (``/assets/index-*.js``, ``/favicon.ico``) are served by the
+    parent; an unknown path — a hard refresh on a client-side route like
+    ``/admin/pii-review`` — yields index.html so the SPA router can take over.
+    All path resolution stays inside StaticFiles' own traversal-safe lookup; we
+    only ever hand it the constant ``index.html``, so no request data reaches a
+    filesystem path expression here."""
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code == 404:
+                return await super().get_response("index.html", scope)
+            raise
+
+
+def _serve_spa(root: FastAPI, dist_dir: Path) -> None:
+    """Mount the built SPA from ``dist_dir`` at ``/`` (after the ``/api`` mount)."""
     dist = dist_dir.resolve()
-    index = dist / "index.html"
     # Fail loud at startup on a misconfigured dist (wrong path, or a frontend that
-    # was never built) rather than 500ing every request later with a traceback.
-    if not index.is_file():
+    # was never built) rather than 404/500ing every request later.
+    if not (dist / "index.html").is_file():
         raise RuntimeError(
             f"STELE_FRONTEND_DIST={dist_dir!r} has no index.html "
-            f"(resolved {index}); build the frontend or fix the path."
+            f"(resolved {dist / 'index.html'}); build the frontend or fix the path."
         )
-
-    @root.get("/{full_path:path}")
-    async def spa(full_path: str) -> FileResponse:
-        candidate = (dist / full_path).resolve()
-        # is_relative_to guards against path traversal (../../etc/passwd).
-        if full_path and candidate.is_file() and candidate.is_relative_to(dist):
-            return FileResponse(candidate)
-        return FileResponse(index)
+    root.mount("/", _SpaStaticFiles(directory=dist, html=True), name="spa")
 
 
 def create_app() -> FastAPI:

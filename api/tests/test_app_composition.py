@@ -58,6 +58,8 @@ async def test_spa_served_at_root(composed_client: AsyncClient) -> None:
     response = await composed_client.get("/")
     assert response.status_code == 200
     assert response.text == INDEX_HTML
+    # HEAD probes (proxies/health-checkers) get 200, not 405.
+    assert (await composed_client.head("/")).status_code == 200
 
 
 async def test_spa_fallback_for_client_route(composed_client: AsyncClient) -> None:

@@ -73,6 +73,12 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY api/ ./api/
 COPY dbt/ ./dbt/
 COPY scripts/ ./scripts/
+# The shared schemas+grants SQL that the migrate entrypoint's bootstrap step
+# (scripts/bootstrap_roles.py) applies. It resolves this by its repo-relative
+# path, so copy it to the same place under /app. Only the shared file is needed
+# in prod — 01-roles.sql creates roles with the throwaway dev password and is
+# dev/CI only (prod creates roles from secrets).
+COPY .devcontainer/postgres-init/02-schemas-and-grants.sql ./.devcontainer/postgres-init/02-schemas-and-grants.sql
 
 # Install the project now that api/ exists. Dev and CI run scripts via `uv run`
 # with the project installed, so `import api` resolves from site-packages; match

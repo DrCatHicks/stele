@@ -5,6 +5,10 @@
 .git
 .github
 .devcontainer
+# ...except the shared schemas+grants SQL: the migrate entrypoint's bootstrap
+# step applies it at runtime, so it must reach the image build context. (The
+# rest of .devcontainer stays out — it's dev-container tooling.)
+!.devcontainer/postgres-init/02-schemas-and-grants.sql
 
 # Python envs + caches
 .venv

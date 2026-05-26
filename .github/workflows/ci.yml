@@ -334,6 +334,10 @@ jobs:
             test -f /app/frontend/dist/index.html
             test -d /app/frontend/node_modules/survey-core
             test -f /app/frontend/scripts/roundTrip.mjs
+            # The migrate entrypoint bootstraps roles+grants before alembic, and
+            # bootstrap_roles.py applies this shared SQL by its repo-relative path —
+            # it must be present in the image or migrate fails before Alembic.
+            test -f /app/.devcontainer/postgres-init/02-schemas-and-grants.sql
             python -c "import api.main"
           '
       - name: Entrypoint dispatch resolves (print mode)

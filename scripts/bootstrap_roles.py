@@ -34,9 +34,10 @@ the check, so this script re-grants WITH INHERIT TRUE before applying the grants
 Inheriting ETL's rights is no escalation: the admin owns these objects and runs
 migrations anyway. A superuser bypasses the check, so the step is a no-op in dev/CI.
 
-Connection. ``STELE_DATABASE_URL`` must be set, or the run fails — a privileged
-bootstrap must not guess where to connect. For local dev against the container
-superuser, opt into the fallback explicitly with ``STELE_ALLOW_DEV_FALLBACK=1``.
+Connection. One of ``STELE_ADMIN_DATABASE_URL`` (preferred) or
+``STELE_DATABASE_URL`` must be set, or the run fails — a privileged bootstrap must
+not guess where to connect. For local dev against the container superuser, opt into
+the fallback explicitly with ``STELE_ALLOW_DEV_FALLBACK=1``.
 
 Run:  STELE_ADMIN_DATABASE_URL=... STELE_API_PASSWORD=... STELE_ETL_PASSWORD=... \
         STELE_ANALYST_PASSWORD=... STELE_PII_REVIEWER_PASSWORD=... \

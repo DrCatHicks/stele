@@ -264,13 +264,22 @@ jobs:
           psql -v ON_ERROR_STOP=1 -c "CREATE ROLE stele_admin LOGIN CREATEROLE PASSWORD 'adminpw';"
           psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE stele_prod OWNER stele_admin;"
       - name: Bootstrap roles, schemas, grants as the admin
+        # Use STELE_ADMIN_DATABASE_URL (the M7.4 admin-connection var) so this
+        # rehearses the Railway path, where the web service carries the admin
+        # connection on this var and stele_api on STELE_DATABASE_URL.
         env:
-          STELE_DATABASE_URL: postgresql+psycopg://stele_admin:adminpw@localhost:5432/stele_prod
+          STELE_ADMIN_DATABASE_URL: postgresql+psycopg://stele_admin:adminpw@localhost:5432/stele_prod
         run: uv run python scripts/bootstrap_roles.py
-      - name: Migrate as the SAME admin (bootstrap-er == migrator)
+      - name: Migrate as the SAME admin (bootstrap-er == migrator; proves the admin-URL decouple)
+        # Set BOTH vars as a real deploy does: the admin connection on
+        # STELE_ADMIN_DATABASE_URL and the least-privilege stele_api connection on
+        # STELE_DATABASE_URL. Alembic must prefer the admin var — if it fell back to
+        # STELE_DATABASE_URL (stele_api), CREATE TABLE would be denied and this step
+        # would fail. So a green migrate proves the M7.4 precedence end-to-end.
         working-directory: api
         env:
-          STELE_DATABASE_URL: postgresql+psycopg://stele_admin:adminpw@localhost:5432/stele_prod
+          STELE_ADMIN_DATABASE_URL: postgresql+psycopg://stele_admin:adminpw@localhost:5432/stele_prod
+          STELE_DATABASE_URL: postgresql+psycopg://stele_api:testapipw@localhost:5432/stele_prod
         run: uv run alembic upgrade head
       - name: Seed as stele_api (proves the app role's writes under non-superuser bootstrap)
         env:
@@ -346,3 +355,21 @@ jobs:
           docker run --rm -e STELE_ENTRYPOINT_PRINT=1 stele:ci web     | grep -q 'uvicorn api.main:app'
           docker run --rm -e STELE_ENTRYPOINT_PRINT=1 stele:ci migrate | grep -q 'alembic upgrade head'
           docker run --rm -e STELE_ENTRYPOINT_PRINT=1 stele:ci etl     | grep -q 'scripts/run_etl.py'
+
+  infra:
+    name: Infra · OpenTofu (fmt + validate)
+    runs-on: ubuntu-latest
+    # The deployment module is validated, not applied — there's no Railway account
+    # or token in CI (same CI-only posture as the Docker image and role bootstrap).
+    # fmt -check pins formatting; init -backend=false + validate prove the config is
+    # well-formed and type-checks against the real provider schema.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+      - name: Format check
+        run: tofu fmt -check -recursive infra/
+      - name: Init + validate the Railway module
+        working-directory: infra/railway
+        run: |
+          tofu init -backend=false
+          tofu validate

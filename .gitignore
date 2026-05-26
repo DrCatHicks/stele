@@ -39,5 +39,15 @@ dist/
 .pnpm-store/
 *.tsbuildinfo
 
+# OpenTofu / Terraform (infra/). State holds generated secrets — never commit it.
+# The provider lock file (.terraform.lock.hcl) IS committed for reproducible inits.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+crash.*.log
+
 # Misc
 *.log

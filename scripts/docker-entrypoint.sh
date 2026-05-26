@@ -12,7 +12,13 @@
 #
 # Connection/secret env (supplied by the deploy, not baked in):
 #   web      STELE_DATABASE_URL (stele_api role), STELE_SESSION_SECRET, STELE_COOKIE_SECURE
-#   migrate  STELE_DATABASE_URL (the admin identity that also bootstraps roles);
+#   migrate  the admin identity that also bootstraps roles, on
+#            STELE_ADMIN_DATABASE_URL (preferred) or STELE_DATABASE_URL — so a deploy
+#            that runs migrate as a pre-deploy step in the *web* service can keep
+#            STELE_DATABASE_URL=stele_api for the web process and set the admin
+#            connection only on STELE_ADMIN_DATABASE_URL. Dev/CI set just
+#            STELE_DATABASE_URL (one admin identity). Both bootstrap_roles.py and
+#            alembic resolve this precedence, so bootstrap-er still == migrator.
 #            STELE_{API,ETL,ANALYST,PII_REVIEWER}_PASSWORD on the FIRST deploy so
 #            bootstrap_roles.py can create the four roles (re-deploys need none);
 #            STELE_SKIP_BOOTSTRAP=1 to skip when roles are managed out of band

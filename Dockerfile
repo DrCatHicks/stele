@@ -40,13 +40,19 @@ FROM node:20-bookworm-slim AS runtime
 # uv tag once the first green build in M7.4 confirms a working one.)
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
-# UV_PYTHON_INSTALL_DIR    where uv puts the Python 3.12 it downloads
+# UV_PYTHON=3.12           pin the minor version. The Node base has no system
+#                          Python, so uv downloads a managed one; left to >=3.12
+#                          (pyproject) it grabs the newest (3.14), where dbt's
+#                          mashumaro fails to import. Dev + CI run on system 3.12;
+#                          pin so the image matches them.
+# UV_PYTHON_INSTALL_DIR    where uv puts the Python it downloads
 # UV_PROJECT_ENVIRONMENT   the venv uv sync builds; we put its bin on PATH so
 #                          uvicorn/alembic/dbt/python resolve without `uv run`
 # UV_COMPILE_BYTECODE      precompile .pyc at build time (faster cold start)
 # UV_LINK_MODE=copy        copy from the cache into the venv (no hardlink warning
 #                          across filesystems in the image)
-ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python \
+ENV UV_PYTHON=3.12 \
+    UV_PYTHON_INSTALL_DIR=/opt/uv/python \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
@@ -94,6 +100,14 @@ ENV GIT_SHA=${GIT_SHA}
 
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Drop to the unprivileged `node` user (uid 1000, present in the base image): the
+# app needs no root at runtime. The etl entrypoint writes under
+# /app/dbt/{target,etl_artifacts}, so hand /app to that user. The venv and the
+# uv-managed Python (/opt/uv/python) are world-readable/executable, so they stay
+# root-owned.
+RUN chown -R node:node /app
+USER node
 
 EXPOSE 8000
 ENTRYPOINT ["docker-entrypoint.sh"]

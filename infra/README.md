@@ -56,12 +56,23 @@ tick instead of crash-looping). Full procedure + rationale:
 
 CI builds, tests, and pushes the image on every push to `main` (tags `:main` and
 `:<commit-sha>`). To deploy it, point the services at the new image and apply —
-changing the tag string is what tells Railway to redeploy:
+changing the deployed image string is what tells Railway to redeploy:
 
 ```bash
-tofu apply                              # tracks the floating :main tag
+tofu apply                              # deploy :main verbatim — NO-OP if unchanged*
+tofu apply -var deploy_latest=true      # resolve :main's current digest and ship it
 tofu apply -var image_tag=<commit-sha>  # pin a specific, reproducible build
 ```
+
+\* A bare `apply` deploys the `:main` **tag string**, which never changes when CI
+re-pushes the floating tag — so it won't roll a new build on its own (deploys stay
+deterministic). To ship whatever `main` currently points at, add
+`-var deploy_latest=true`: it resolves the live `:main` digest from GHCR and deploys
+that immutable `…@sha256:…` reference, giving OpenTofu a real diff exactly when the
+image moved (and a clean no-op when it hasn't). Pinning `-var image_tag=<sha>` is the
+reproducible/rollback path. The digest lookup uses the `kreuzwerker/docker` provider,
+pulls the public package anonymously, and is gated by `count` so a default apply never
+contacts the registry.
 
 To make a merge to `main` go live automatically (instead of a manual `tofu apply`),
 set a `RAILWAY_TOKEN` **project** token as a GitHub Actions repo secret — that

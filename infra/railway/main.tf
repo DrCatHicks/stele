@@ -71,12 +71,25 @@ resource "random_password" "session_secret" {
   length = 64
 }
 
+# Resolve the floating tag's live digest, but ONLY when asked to ship latest
+# (count gates it: a default apply never contacts the registry). Deploying the
+# digest — not the tag — is what lets `tofu apply -var deploy_latest=true` roll a
+# new build: the :main string never changes, but its digest does, so pinning the
+# digest into source_image gives OpenTofu a real diff exactly when CI re-pushed.
+data "docker_registry_image" "app" {
+  count = var.deploy_latest ? 1 : 0
+  name  = "${var.image}:${var.image_tag}"
+}
+
 locals {
   pg_host = "${railway_service.postgres.name}.railway.internal"
   pg_port = 5432
 
   # The single prebuilt image both app services pull (D7). CI publishes it.
-  app_image = "${var.image}:${var.image_tag}"
+  # Default: deploy the tag verbatim (deterministic; a floating-tag re-push is a
+  # no-op). With deploy_latest, deploy the resolved immutable digest instead, so
+  # apply ships the current build and redeploys only when the digest moved.
+  app_image = var.deploy_latest ? "${var.image}@${data.docker_registry_image.app[0].sha256_digest}" : "${var.image}:${var.image_tag}"
 
   # Effective password = the operator's override if set, else the generated one.
   # A rotation flows: rotate_role_password.py ALTERs the live role, then the

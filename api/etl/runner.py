@@ -284,24 +284,21 @@ class RunResult:
     artifacts_dir: Path
 
 
-def execute_run(
+def complete_run(
     conn: psycopg.Connection[Any],
+    run_id: uuid.UUID,
     *,
     dbt_build: Callable[[list[str] | None], int] = run_dbt_build,
-    sources: list[str] | None = None,
     extra_args: list[str] | None = None,
 ) -> RunResult:
-    """Record a run on an open connection: start → dbt build → finish.
+    """Finish an already-started run (a committed 'running' row): build → finish.
 
-    The connection and the dbt-build callable are injectable so the orchestration
-    can be tested against a real ``ops.etl_runs`` with dbt stubbed.
+    Split out of :func:`execute_run` so a caller can record the start row on one
+    connection (making the run immediately visible) and run the long dbt build on
+    another — the admin-triggered path (``api.etl.admin_service``) does exactly
+    this. ``execute_run`` is start + this. The dbt-build callable is injectable so
+    the orchestration can be tested against a real ``ops.etl_runs`` with dbt stubbed.
     """
-    run_id = uuid.uuid4()
-    if sources is None:
-        sources = declared_sources()
-
-    record_run_start(conn, run_id, read_source_counts(conn, sources), dbt_version(), git_sha())
-
     # Anything after the committed 'running' row must resolve the row — a nonzero
     # dbt exit *or* a raised exception (missing dbt binary, a count error). Without
     # this, an exception would leave the row stuck at 'running' forever,
@@ -332,6 +329,26 @@ def execute_run(
         raise
 
     return RunResult(run_id, status, returncode, artifacts_dir)
+
+
+def execute_run(
+    conn: psycopg.Connection[Any],
+    *,
+    dbt_build: Callable[[list[str] | None], int] = run_dbt_build,
+    sources: list[str] | None = None,
+    extra_args: list[str] | None = None,
+) -> RunResult:
+    """Record a run on an open connection: start → dbt build → finish.
+
+    The connection and the dbt-build callable are injectable so the orchestration
+    can be tested against a real ``ops.etl_runs`` with dbt stubbed.
+    """
+    run_id = uuid.uuid4()
+    if sources is None:
+        sources = declared_sources()
+
+    record_run_start(conn, run_id, read_source_counts(conn, sources), dbt_version(), git_sha())
+    return complete_run(conn, run_id, dbt_build=dbt_build, extra_args=extra_args)
 
 
 def run_etl(extra_args: list[str] | None = None) -> int:

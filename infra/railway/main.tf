@@ -16,12 +16,16 @@
 # so the behavior moves into the image's entrypoint. At num_replicas=1 a failed
 # migrate keeps the prior deploy serving; >1 replica would race (roadmap D3).
 #
-# Two identities reach Postgres from the one web service, by design (M7.3 + M7.4):
+# Three identities reach Postgres from the one web service, by design (M7.3 + M7.4):
 #   - the web *process* connects as least-privilege stele_api  (STELE_DATABASE_URL)
 #   - the migrate-on-start step connects as the admin/owner role (STELE_ADMIN_DATABASE_URL)
+#   - the admin-triggered ETL endpoint connects as stele_etl     (STELE_ETL_DATABASE_URL)
 # bootstrap_roles.py and alembic both prefer STELE_ADMIN_DATABASE_URL, so the runtime
 # never holds more than stele_api. The admin connection string is present in the web
 # service's env (the migrate needs it) — a known tradeoff, see docs/verification/m7.4-railway.md.
+# The stele_etl URL + DBT_* env let the operator's "Run ETL now" button run the
+# existing runner in-process (no new runtime component) and read run status; it's
+# strictly below the admin URL already present, so it adds no escalation ceiling.
 #
 # ETL runs as a cron service (M7.5) — the same image, selecting the `etl` verb via
 # STELE_ENTRYPOINT=etl (image deploys can't override the start command via the
@@ -242,6 +246,43 @@ resource "railway_variable_collection" "web" {
     {
       name  = "PORT"
       value = "8000"
+    },
+    # Admin-triggered ETL (the operator's "Run ETL now" button) runs the same
+    # runner in-process here rather than adding a runtime component, so the web
+    # service needs the ETL role's connection + dbt's profile env — the same
+    # values the cron service below carries. The endpoint and its status reads
+    # connect as stele_etl (which already holds the ops.etl_runs grants), so the
+    # web *process* role stays stele_api and no new grant is introduced.
+    #
+    # Tradeoff (accepted, like the admin URL above): a web-RCE could now also
+    # reach stele_etl — strictly less than the admin/owner URL already present
+    # for migrate-on-start, so no new escalation ceiling. Revisit alongside the
+    # admin-creds-on-web item (separate ETL trigger service) at real PII.
+    #
+    # Operational note: at num_replicas=1 the build runs in-process and pins a
+    # worker for its duration, so trigger off-peak. A web redeploy mid-build
+    # orphans the run; it's flagged "interrupted" in the console (a stale
+    # 'running' row, default 30 min — STELE_ETL_RUN_STALE_SECONDS) and cleared
+    # there, so it never silently wedges the trigger.
+    {
+      name  = "STELE_ETL_DATABASE_URL"
+      value = local.stele_etl_url
+    },
+    {
+      name  = "DBT_HOST"
+      value = local.pg_host
+    },
+    {
+      name  = "DBT_USER"
+      value = "stele_etl"
+    },
+    {
+      name  = "DBT_PASSWORD"
+      value = local.stele_etl_password
+    },
+    {
+      name  = "DBT_DBNAME"
+      value = var.database_name
     },
   ]
 }

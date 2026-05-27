@@ -35,6 +35,11 @@ export function AdminLayout() {
               </NavLink>
             ) : null}
             {user?.role === 'admin' ? (
+              <NavLink to="/admin/etl" className={navLinkClass}>
+                ETL
+              </NavLink>
+            ) : null}
+            {user?.role === 'admin' ? (
               <NavLink to="/admin/gdpr" className={navLinkClass}>
                 GDPR
               </NavLink>

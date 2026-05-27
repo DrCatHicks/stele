@@ -28,6 +28,7 @@ from starlette.types import Scope
 from api.auth.provisioning_router import router as db_credentials_router
 from api.auth.router import router as auth_router
 from api.db import SessionDep
+from api.etl.admin_router import router as etl_admin_router
 from api.survey_engine.gdpr_router import router as gdpr_router
 from api.survey_engine.pii_review_router import router as pii_review_router
 from api.survey_engine.respondents_router import router as respondents_router
@@ -45,6 +46,7 @@ def create_api_app() -> FastAPI:
     api.include_router(respondents_router)
     api.include_router(gdpr_router)
     api.include_router(pii_review_router)
+    api.include_router(etl_admin_router)
 
     @api.get("/health")
     async def health() -> dict[str, str]:

@@ -270,3 +270,51 @@ export async function rejectFreeText(id: number, note?: string): Promise<FreeTex
     jsonInit('POST', { note: note ?? null }),
   );
 }
+
+// --- ETL runs (admin) ------------------------------------------------------
+
+// A dbt node that didn't pass, surfaced to explain a failed run.
+export interface EtlNodeFailure {
+  unique_id: string | null;
+  status: string | null;
+  message: string | null;
+}
+
+// One ops.etl_runs row. status is 'running' | 'success' | 'failed'. Row counts and
+// dbt_version/git_sha are null until/unless the run records them; failures is empty
+// unless a node errored.
+export interface EtlRun {
+  run_id: string;
+  status: string;
+  started_at: string;
+  completed_at: string | null;
+  source_row_counts: Record<string, number | null> | null;
+  mart_row_counts: Record<string, number> | null;
+  dbt_version: string | null;
+  git_sha: string | null;
+  // A 'running' run past the stale window — almost certainly orphaned by a restart.
+  // Surfaced so the console can offer to clear it rather than wedge the trigger.
+  interrupted: boolean;
+  failures: EtlNodeFailure[];
+}
+
+export async function listEtlRuns(limit = 20): Promise<EtlRun[]> {
+  return request<EtlRun[]>(`/admin/etl/runs?limit=${limit}`);
+}
+
+// Start a full-refresh ETL run. Resolves with the freshly-created 'running' row, or
+// throws ApiError(409) when a run is already in progress (a prior trigger or the
+// daily cron).
+export async function triggerEtlRun(): Promise<EtlRun> {
+  return request<EtlRun>('/admin/etl/runs', jsonInit('POST'));
+}
+
+export async function getEtlRun(runId: string): Promise<EtlRun> {
+  return request<EtlRun>(`/admin/etl/runs/${runId}`);
+}
+
+// Resolve an interrupted (stale 'running') run to 'failed' so it stops wedging the
+// trigger. Throws ApiError(409) for a live/finished run, 404 if unknown.
+export async function clearEtlRun(runId: string): Promise<EtlRun> {
+  return request<EtlRun>(`/admin/etl/runs/${runId}/clear`, jsonInit('POST'));
+}

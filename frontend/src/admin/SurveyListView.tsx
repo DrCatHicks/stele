@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
-import { createSurvey, listSurveys, type SurveySummary } from '../api';
+import {
+  clearSurveyShortCode,
+  createSurvey,
+  listSurveys,
+  setSurveyShortCode,
+  type SurveySummary,
+} from '../api';
 import { formatDate } from '../format';
 import {
   Alert,
@@ -9,6 +15,7 @@ import {
   Button,
   Card,
   EmptyState,
+  INPUT_CLASSES,
   LoadingState,
   PageHeader,
   statusTone,
@@ -35,10 +42,76 @@ function groupBySurvey(rows: SurveySummary[]): SurveySummary[][] {
   return [...groups.values()];
 }
 
+// The highest-version published row, or undefined if nothing's published yet.
+// A short link only resolves to a published version, so the copy-link control
+// keys off this.
+function latestPublished(versions: SurveySummary[]): SurveySummary | undefined {
+  return versions
+    .filter((v) => v.status === 'published')
+    .reduce<
+      SurveySummary | undefined
+    >((best, v) => (best === undefined || v.version > best.version ? v : best), undefined);
+}
+
 function SurveyCard({ versions }: { versions: SurveySummary[] }) {
   const survey = versions[0];
+  const [code, setCode] = useState<string | null>(survey?.short_code ?? null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(survey?.short_code ?? '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
   if (!survey) return null;
   const totalResponses = versions.reduce((sum, v) => sum + v.response_count, 0);
+  const published = latestPublished(versions);
+
+  const origin = typeof window === 'undefined' ? '' : window.location.origin;
+  // Only published versions are reachable; with no published version there's no
+  // working link to copy, so the control is disabled until then.
+  const link = published
+    ? code
+      ? `${origin}/s/${code}`
+      : `${origin}/?survey=${survey.survey_id}&version=${published.version}`
+    : null;
+
+  const handleCopy = async (): Promise<void> => {
+    if (!link) return;
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+      setError(null);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch (err: unknown) {
+      setError(errorMessage(err));
+    }
+  };
+
+  const handleSave = (): void => {
+    setBusy(true);
+    setError(null);
+    setSurveyShortCode(survey.survey_id, draft.trim())
+      .then((result) => {
+        setCode(result.short_code);
+        setDraft(result.short_code);
+        setEditing(false);
+      })
+      .catch((err: unknown) => setError(errorMessage(err)))
+      .finally(() => setBusy(false));
+  };
+
+  const handleClear = (): void => {
+    setBusy(true);
+    setError(null);
+    clearSurveyShortCode(survey.survey_id)
+      .then(() => {
+        setCode(null);
+        setDraft('');
+        setEditing(false);
+      })
+      .catch((err: unknown) => setError(errorMessage(err)))
+      .finally(() => setBusy(false));
+  };
 
   return (
     <Card>
@@ -49,6 +122,85 @@ function SurveyCard({ versions }: { versions: SurveySummary[] }) {
           {totalResponses === 1 ? '' : 's'}
         </span>
       </div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border px-5 py-3">
+        {editing ? (
+          <>
+            <label htmlFor={`code-${survey.survey_id}`} className="text-xs font-medium text-muted">
+              Short code
+            </label>
+            <input
+              id={`code-${survey.survey_id}`}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="e.g. climate-2026"
+              disabled={busy}
+              className={`${INPUT_CLASSES} max-w-[16rem]`}
+            />
+            <Button type="button" size="sm" onClick={handleSave} disabled={busy || !draft.trim()}>
+              Save
+            </Button>
+            {code ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="danger"
+                onClick={handleClear}
+                disabled={busy}
+              >
+                Remove
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setEditing(false);
+                setDraft(code ?? '');
+                setError(null);
+              }}
+              disabled={busy}
+            >
+              Cancel
+            </Button>
+          </>
+        ) : (
+          <>
+            <span className="text-xs font-medium text-muted">Short code</span>
+            {code ? (
+              <code className="text-sm text-ink">{code}</code>
+            ) : (
+              <span className="text-sm text-faint">none</span>
+            )}
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                setEditing(true);
+                setDraft(code ?? '');
+              }}
+            >
+              {code ? 'Edit' : 'Add short code'}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={() => void handleCopy()}
+              disabled={!link}
+              title={link ? link : 'Publish a version to get a shareable link'}
+            >
+              {copied ? 'Copied!' : 'Copy link'}
+            </Button>
+          </>
+        )}
+      </div>
+      {error ? (
+        <div className="border-b border-border px-5 py-2">
+          <Alert tone="error">{error}</Alert>
+        </div>
+      ) : null}
       <table className="w-full text-sm">
         <thead>
           <tr className="text-left text-xs uppercase tracking-wide text-faint">

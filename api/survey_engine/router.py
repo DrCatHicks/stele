@@ -12,6 +12,9 @@ from api.survey_engine import service
 from api.survey_engine.schemas import (
     ResponseSubmit,
     ResponseSubmitOut,
+    ShortCodeOut,
+    ShortCodeResolved,
+    ShortCodeSet,
     SurveyDefinitionDetail,
     SurveyDefinitionOut,
     SurveyDraftCreate,
@@ -28,8 +31,13 @@ _author_only = Depends(require_role("researcher", "admin"))
 @router.get("", response_model=list[SurveyListItem], dependencies=[_author_only])
 async def list_surveys(session: SessionDep) -> list[SurveyListItem]:
     rows = await service.list_definitions_with_counts(session)
+    short_codes = await service.get_short_codes_map(session)
     return [
-        SurveyListItem(**SurveyDefinitionOut.model_validate(s).model_dump(), response_count=n)
+        SurveyListItem(
+            **SurveyDefinitionOut.model_validate(s).model_dump(),
+            response_count=n,
+            short_code=short_codes.get(s.survey_id),
+        )
         for s, n in rows
     ]
 
@@ -98,6 +106,43 @@ async def publish_survey(
             status_code=503, detail=f"round-trip validation unavailable: {exc}"
         ) from None
     return SurveyDefinitionOut.model_validate(survey)
+
+
+@router.put(
+    "/{survey_id}/short-code",
+    response_model=ShortCodeOut,
+    dependencies=[_author_only],
+)
+async def set_short_code(
+    survey_id: uuid.UUID, body: ShortCodeSet, session: SessionDep
+) -> ShortCodeOut:
+    try:
+        row = await service.set_short_code(session, survey_id, body.short_code)
+    except service.SurveyNotFound:
+        raise HTTPException(status_code=404, detail="survey not found") from None
+    except service.InvalidShortCode as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    except service.ShortCodeTaken:
+        raise HTTPException(status_code=409, detail="that short code is already in use") from None
+    return ShortCodeOut.model_validate(row)
+
+
+@router.delete("/{survey_id}/short-code", status_code=204, dependencies=[_author_only])
+async def clear_short_code(survey_id: uuid.UUID, session: SessionDep) -> None:
+    # Idempotent: clearing a survey with no code is still a 204 (the resource is
+    # absent either way), so the UI needn't special-case it.
+    await service.clear_short_code(session, survey_id)
+
+
+@router.get("/by-code/{short_code}", response_model=ShortCodeResolved)
+async def resolve_short_code(short_code: str, session: SessionDep) -> ShortCodeResolved:
+    resolved = await service.resolve_short_code(session, short_code)
+    if resolved is None:
+        # Unknown code or no published version yet — same 404 either way so a
+        # public caller can't probe which codes exist.
+        raise HTTPException(status_code=404, detail="no published survey for this link")
+    survey_id, version = resolved
+    return ShortCodeResolved(survey_id=survey_id, version=version)
 
 
 @router.get("/{survey_id}/versions/{version}", response_model=SurveyDefinitionDetail)

@@ -37,6 +37,28 @@ class SurveyDefinitionDetail(SurveyDefinitionOut):
 class SurveyListItem(SurveyDefinitionOut):
     # Live (non-tombstoned) response count for this version; backs the dashboard.
     response_count: int
+    # The survey's short code, if an operator set one. Survey-level, so it repeats
+    # across every version row of the same survey; None when unset.
+    short_code: str | None = None
+
+
+class ShortCodeSet(BaseModel):
+    # Raw operator input; normalised + validated server-side (lowercase, link-safe).
+    short_code: str
+
+
+class ShortCodeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    survey_id: uuid.UUID
+    short_code: str
+
+
+class ShortCodeResolved(BaseModel):
+    """What a /s/<code> link resolves to: a survey + its latest published version."""
+
+    survey_id: uuid.UUID
+    version: int
 
 
 class ResponseSubmit(BaseModel):

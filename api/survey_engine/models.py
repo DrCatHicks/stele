@@ -39,6 +39,28 @@ class SurveyDefinition(Base):
     )
 
 
+class SurveyShortCode(Base):
+    """Operator-chosen short link code for a survey (one per survey_id).
+
+    Backs the ``/s/<code>`` respondent link, which resolves to the survey's latest
+    published version at request time (see service.resolve_short_code). Lives in a
+    side table rather than on survey_definitions because the code belongs to the
+    survey identity, not a single version row. Not an ETL source — invisible to dbt.
+    """
+
+    __tablename__ = "survey_short_codes"
+    __table_args__ = {"schema": "app"}
+
+    survey_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    short_code: Mapped[str] = mapped_column(Text, unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+
+
 class RawResponse(Base):
     __tablename__ = "raw_responses"
     __table_args__ = {"schema": "app"}

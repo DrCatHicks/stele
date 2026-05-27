@@ -27,6 +27,15 @@ export interface SurveyMeta {
 export interface SurveySummary extends SurveyMeta {
   // Live (non-tombstoned) response count for this version.
   response_count: number;
+  // The survey's short code, if set. Survey-level, so it repeats across every
+  // version row of the same survey; null when unset.
+  short_code: string | null;
+}
+
+// What a /s/<code> link resolves to: a survey + its latest published version.
+export interface ShortCodeResolved {
+  survey_id: string;
+  version: number;
 }
 
 export interface SubmitBody {
@@ -121,6 +130,12 @@ export async function submitResponse(
   );
 }
 
+// Resolve a /s/<code> short link to its survey + latest published version.
+// Throws ApiError(404) when the code is unknown or has no published version.
+export async function resolveShortCode(code: string): Promise<ShortCodeResolved> {
+  return request<ShortCodeResolved>(`/surveys/by-code/${encodeURIComponent(code)}`);
+}
+
 // --- Auth ------------------------------------------------------------------
 
 export async function login(email: string, password: string): Promise<User> {
@@ -158,6 +173,20 @@ export async function editSurvey(
 
 export async function publishSurvey(surveyId: string, version: number): Promise<SurveyMeta> {
   return request<SurveyMeta>(`/surveys/${surveyId}/versions/${version}/publish`, jsonInit('POST'));
+}
+
+// Set (or replace) a survey's short code. Throws ApiError(409) if another survey
+// owns the code, ApiError(422) if the format is invalid.
+export async function setSurveyShortCode(
+  surveyId: string,
+  shortCode: string,
+): Promise<{ survey_id: string; short_code: string }> {
+  return request(`/surveys/${surveyId}/short-code`, jsonInit('PUT', { short_code: shortCode }));
+}
+
+// Remove a survey's short code (idempotent — 204 even if it had none).
+export async function clearSurveyShortCode(surveyId: string): Promise<void> {
+  await request<void>(`/surveys/${surveyId}/short-code`, { method: 'DELETE' });
 }
 
 // --- GDPR / erasure (admin) ------------------------------------------------

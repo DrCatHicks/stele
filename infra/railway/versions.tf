@@ -27,6 +27,14 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.6"
     }
+    # Used ONLY to resolve the live digest of the floating image tag when
+    # var.deploy_latest is set (main.tf data.docker_registry_image.app). The
+    # data source talks to the registry over HTTPS — no Docker daemon needed —
+    # and is gated by count, so a default apply never configures or contacts it.
+    docker = {
+      source  = "kreuzwerker/docker"
+      version = "~> 3.0"
+    }
   }
 }
 
@@ -34,3 +42,7 @@ terraform {
 # Use a workspace/account token (not a project token) so it can create projects.
 # Never commit the token; export it in the shell that runs `tofu`.
 provider "railway" {}
+
+# No configuration: the only docker usage here is the registry digest lookup
+# (a public GHCR package, pulled anonymously). No daemon or registry auth.
+provider "docker" {}

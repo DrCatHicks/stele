@@ -37,6 +37,12 @@ variable "image_tag" {
   default     = "main"
 }
 
+variable "deploy_latest" {
+  description = "Opt-in 'ship the current build' switch. Off (default): the services deploy var.image:var.image_tag verbatim, so a plain `tofu apply` is a no-op even after CI re-pushes the floating :main tag (the string is unchanged) — deploys stay deterministic. On (`tofu apply -var deploy_latest=true`): resolve the live digest of var.image:var.image_tag (default :main) and deploy that immutable digest, so apply ships whatever main currently points at, redeploying only when the digest actually moved. Pinning -var image_tag=<sha> still works under either setting."
+  type        = bool
+  default     = false
+}
+
 variable "database_name" {
   description = "Postgres database the app and migrations use."
   type        = string

@@ -87,12 +87,21 @@ into the image at build time, and `api/etl/runner.git_sha()` reads it for
 2. Roll it out:
    ```bash
    cd infra/railway
-   tofu apply                              # tracks the floating :main tag
+   tofu apply                              # deploy :main verbatim — no-op if unchanged
+   tofu apply -var deploy_latest=true      # resolve :main's current digest and ship it
    tofu apply -var image_tag=<commit-sha>  # pin a specific, reproducible build
    ```
-   Changing the tag string is what makes the provider update the service and Railway
-   redeploy. (A bare `apply` against an unchanged `:main` string is a no-op; pin a
-   sha to force a known rollout.)
+   Changing the deployed image string is what makes the provider update the service and
+   Railway redeploy. A bare `apply` deploys the `:main` **tag string**, which doesn't
+   change when CI re-pushes the floating tag — so it's a no-op and won't roll a new build
+   by itself (deploys stay deterministic). Two ways to actually ship a build:
+   - `-var deploy_latest=true` resolves the live `:main` **digest** from GHCR and deploys
+     that immutable `…@sha256:…` reference. The string moves exactly when the image
+     moved, so apply ships the current build and is a clean no-op when it hasn't. Uses
+     the `kreuzwerker/docker` provider (public package, anonymous pull); a `count` guard
+     means a default apply never contacts the registry.
+   - `-var image_tag=<commit-sha>` pins a known sha — the reproducible rollout / rollback
+     path.
 
 ### Optional: auto-deploy on merge to main
 

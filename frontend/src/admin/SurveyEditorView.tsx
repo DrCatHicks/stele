@@ -2,7 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 
 import { editSurvey, fetchSurvey, publishSurvey, type SurveyDetail } from '../api';
+import { Alert, Badge, Button, Card, CardBody, LoadingState, PageHeader, statusTone } from '../ui';
+import { JsonEditor } from './JsonEditor';
 import { SurveyPreview } from './SurveyPreview';
+import { STARTER_TEMPLATES } from './starterTemplates';
 
 // ApiError extends Error and now carries the API's `detail` (e.g. the publish
 // gate's 422 reason), so the generic message is the human-readable one.
@@ -39,7 +42,7 @@ export function SurveyEditorView() {
     };
   }, [surveyId, version]);
 
-  // Parse the textarea once for both preview and save; a parse error disables
+  // Parse the editor text once for both preview and save; a parse error disables
   // both and is shown inline rather than sent to the API.
   const parsed = useMemo<
     { ok: true; value: Record<string, unknown> } | { ok: false; message: string }
@@ -79,64 +82,109 @@ export function SurveyEditorView() {
       .finally(() => setBusy(false));
   };
 
+  const applyTemplate = (id: string): void => {
+    const template = STARTER_TEMPLATES.find((t) => t.id === id);
+    if (!template) return;
+    setDraftText(JSON.stringify(template.definition, null, 2));
+    setNotice(null);
+    setError(null);
+  };
+
   // Guard a malformed URL (e.g. a non-numeric version) up front, so it shows an
   // error instead of hanging forever on the detail===null loading state.
-  if (paramsInvalid) return <div role="alert">Invalid survey URL.</div>;
-  if (error && detail === null) return <div role="alert">Error: {error}</div>;
-  if (detail === null) return <div role="status">Loading…</div>;
+  if (paramsInvalid) return <Alert tone="error">Invalid survey URL.</Alert>;
+  if (error && detail === null) return <Alert tone="error">Error: {error}</Alert>;
+  if (detail === null) return <LoadingState />;
 
   return (
     <section>
-      <h1>
-        {surveyId} · v{version} <small>({detail.status})</small>
-      </h1>
-      {error ? (
-        <p role="alert" style={{ color: 'crimson' }}>
-          {error}
-        </p>
-      ) : null}
-      {notice ? <p role="status">{notice}</p> : null}
+      <PageHeader
+        title={
+          <span className="flex items-center gap-2">
+            <code className="text-base">{surveyId}</code>
+            <span className="text-muted">· v{version}</span>
+            <Badge tone={statusTone(detail.status)}>{detail.status}</Badge>
+          </span>
+        }
+        actions={
+          <>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setShowPreview((v) => !v)}
+              disabled={!parsed.ok}
+            >
+              {showPreview ? 'Hide preview' : 'Preview'}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={handleSave}
+              disabled={busy || isPublished || !parsed.ok}
+            >
+              Save draft
+            </Button>
+            <Button type="button" onClick={handlePublish} disabled={busy || isPublished}>
+              Publish
+            </Button>
+          </>
+        }
+      />
 
-      <label style={{ display: 'block' }}>
-        Definition JSON
-        <textarea
-          aria-label="Definition JSON"
-          value={draftText}
-          onChange={(e) => setDraftText(e.target.value)}
-          readOnly={isPublished}
-          spellCheck={false}
-          rows={20}
-          style={{ width: '100%', fontFamily: 'monospace' }}
-        />
-      </label>
-      {!parsed.ok ? (
-        <p role="alert" style={{ color: 'crimson' }}>
-          Invalid JSON: {parsed.message}
-        </p>
-      ) : null}
-
-      <div style={{ display: 'flex', gap: '0.5rem', margin: '0.5rem 0' }}>
-        <button type="button" onClick={handleSave} disabled={busy || isPublished || !parsed.ok}>
-          Save draft
-        </button>
-        <button type="button" onClick={handlePublish} disabled={busy || isPublished}>
-          Publish
-        </button>
-        <button type="button" onClick={() => setShowPreview((v) => !v)} disabled={!parsed.ok}>
-          {showPreview ? 'Hide preview' : 'Preview'}
-        </button>
-      </div>
+      {error ? <Alert tone="error">{error}</Alert> : null}
+      {notice ? <Alert tone="success">{notice}</Alert> : null}
       {isPublished ? (
-        <p>
-          <em>Published surveys are immutable. Create a new draft version to make changes.</em>
-        </p>
+        <Alert tone="info">
+          Published surveys are immutable. Create a new draft version to make changes.
+        </Alert>
       ) : null}
+
+      <Card className="mt-4">
+        <CardBody className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-sm font-medium text-ink">Definition JSON</span>
+            {!isPublished ? (
+              <label className="flex items-center gap-2 text-sm text-muted">
+                Start from template
+                <select
+                  aria-label="Start from template"
+                  defaultValue=""
+                  onChange={(e) => {
+                    applyTemplate(e.target.value);
+                    e.target.selectedIndex = 0;
+                  }}
+                  className="rounded-md border border-border bg-surface px-2 py-1 text-sm text-ink"
+                >
+                  <option value="" disabled>
+                    Choose…
+                  </option>
+                  {STARTER_TEMPLATES.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+          </div>
+
+          <JsonEditor
+            aria-label="Definition JSON"
+            value={draftText}
+            onChange={setDraftText}
+            readOnly={isPublished}
+          />
+          {!parsed.ok ? <Alert tone="error">Invalid JSON: {parsed.message}</Alert> : null}
+        </CardBody>
+      </Card>
 
       {showPreview && parsed.ok ? (
-        <div style={{ borderTop: '1px solid #ddd', marginTop: '1rem', paddingTop: '1rem' }}>
-          <h2>Preview</h2>
-          <SurveyPreview definition={parsed.value} />
-        </div>
+        <Card className="mt-4">
+          <CardBody>
+            <h2 className="mb-2 text-sm font-semibold text-ink">Preview</h2>
+            <SurveyPreview definition={parsed.value} />
+          </CardBody>
+        </Card>
       ) : null}
     </section>
   );

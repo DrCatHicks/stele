@@ -13,6 +13,31 @@ vi.mock('../api', async (importOriginal) => ({
   publishSurvey: vi.fn(),
 }));
 
+// CodeMirror is contenteditable-based and hostile to jsdom; stand it in with a
+// plain textarea carrying the same props (value/onChange/readOnly/aria-label) so
+// these tests exercise the editor's save/publish/parse logic, not the third-party
+// widget. The real JsonEditor is smoke-tested in JsonEditor.test.
+vi.mock('./JsonEditor', () => ({
+  JsonEditor: ({
+    value,
+    onChange,
+    readOnly,
+    'aria-label': ariaLabel,
+  }: {
+    value: string;
+    onChange: (value: string) => void;
+    readOnly?: boolean;
+    'aria-label'?: string;
+  }) => (
+    <textarea
+      aria-label={ariaLabel}
+      value={value}
+      readOnly={readOnly}
+      onChange={(e) => onChange(e.target.value)}
+    />
+  ),
+}));
+
 const { fetchSurvey, editSurvey, publishSurvey } = await import('../api');
 const mockedFetch = vi.mocked(fetchSurvey);
 const mockedEdit = vi.mocked(editSurvey);

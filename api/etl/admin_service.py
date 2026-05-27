@@ -103,9 +103,14 @@ def _stale_seconds() -> int:
     if raw is None:
         return _DEFAULT_STALE_SECONDS
     try:
-        return int(raw)
+        value = int(raw)
     except ValueError:
         return _DEFAULT_STALE_SECONDS
+    # A negative window would invert the semantics — make_interval(secs => -n)
+    # adds time, so no run ever counts as active (guard bypassed) and every run
+    # looks interrupted. Treat it as the misconfiguration it is. 0 stays valid
+    # (it means "treat any running row as stale").
+    return value if value >= 0 else _DEFAULT_STALE_SECONDS
 
 
 def _active_running_row(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:

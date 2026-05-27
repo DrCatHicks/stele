@@ -130,7 +130,9 @@ export function GdprView() {
 
       <h2 className="mb-2 text-sm font-semibold text-ink">Erasure audit</h2>
       {audit === null ? (
-        <LoadingState />
+        error ? null : (
+          <LoadingState />
+        )
       ) : audit.length === 0 ? (
         <EmptyState>No withdrawals recorded.</EmptyState>
       ) : (

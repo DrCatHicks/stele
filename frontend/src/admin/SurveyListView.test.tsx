@@ -71,6 +71,14 @@ describe('SurveyListView', () => {
     expect(await screen.findByText('No surveys yet.')).toBeInTheDocument();
   });
 
+  it('shows the error alone (not a perpetual spinner) when the load fails', async () => {
+    mockedList.mockRejectedValue(new Error('boom'));
+    renderList();
+    expect(await screen.findByRole('alert')).toHaveTextContent('boom');
+    // Regression: the error and loading states are mutually exclusive.
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
   it('creates a draft and navigates to its editor', async () => {
     mockedList.mockResolvedValue([]);
     mockedCreate.mockResolvedValue({

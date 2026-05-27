@@ -5,9 +5,15 @@ backend) is anonymous. The round-trip publish gate is stubbed in conftest, so
 publishing here is synchronous.
 """
 
+import uuid
 from typing import Any
 
+import pytest
 from httpx import AsyncClient
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from api.survey_engine.models import SurveyShortCode
 
 VALID_DEFINITION: dict[str, Any] = {
     "pages": [
@@ -180,3 +186,13 @@ async def test_set_and_clear_require_auth(client: AsyncClient) -> None:
     assert put.status_code == 401
     delete = await client.delete(f"/surveys/{sid}/short-code")
     assert delete.status_code == 401
+
+
+@pytest.mark.parametrize("bad_code", ["Bad Code!", "ab", "-leading", "trailing-", "x" * 65])
+async def test_db_check_rejects_malformed_code(db_session: AsyncSession, bad_code: str) -> None:
+    # The format/length rules are enforced at the storage boundary too (CHECK
+    # constraints), so a code written directly — bypassing the service-layer
+    # validation — still can't violate the invariant.
+    db_session.add(SurveyShortCode(survey_id=uuid.uuid4(), short_code=bad_code))
+    with pytest.raises(IntegrityError):
+        await db_session.flush()

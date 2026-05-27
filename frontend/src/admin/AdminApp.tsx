@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider, useAuth } from '../auth/AuthContext';
 import { RequireAuth } from '../auth/RequireAuth';
 import { AdminLayout } from './AdminLayout';
+import { EtlView } from './EtlView';
 import { GdprView } from './GdprView';
 import { LoginView } from './LoginView';
 import { PiiReviewView } from './PiiReviewView';
@@ -39,6 +40,7 @@ export default function AdminApp() {
             <Route index element={<AdminIndex />} />
             <Route path="surveys/:surveyId/versions/:version" element={<SurveyEditorView />} />
             <Route path="gdpr" element={<GdprView />} />
+            <Route path="etl" element={<EtlView />} />
             <Route path="pii-review" element={<PiiReviewView />} />
           </Route>
         </Route>

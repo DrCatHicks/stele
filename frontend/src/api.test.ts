@@ -2,12 +2,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ApiError,
+  clearEtlRun,
   fetchSurvey,
+  getEtlRun,
+  listEtlRuns,
   listSurveys,
   login,
   publishSurvey,
   setUnauthorizedHandler,
   submitResponse,
+  triggerEtlRun,
 } from './api';
 
 afterEach(() => {
@@ -130,5 +134,59 @@ describe('unauthorized handler', () => {
 
     await expect(listSurveys()).rejects.toBeInstanceOf(ApiError);
     expect(onUnauthorized).not.toHaveBeenCalled();
+  });
+});
+
+describe('ETL runs', () => {
+  it('lists runs with the limit query param', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson([]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await listEtlRuns(20);
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/admin/etl/runs?limit=20', undefined);
+  });
+
+  it('triggers a run with a POST and returns the running row', async () => {
+    const row = { run_id: 'r1', status: 'running' };
+    const fetchMock = vi.fn().mockResolvedValue(okJson(row));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await triggerEtlRun();
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/admin/etl/runs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    expect(result).toEqual(row);
+  });
+
+  it('surfaces a 409 (run already in progress) as an ApiError', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: false, status: 409 } as unknown as Response),
+    );
+    await expect(triggerEtlRun()).rejects.toMatchObject({ status: 409 });
+  });
+
+  it('fetches a single run by id', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson({ run_id: 'r1', status: 'success' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await getEtlRun('r1');
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/admin/etl/runs/r1', undefined);
+  });
+
+  it('clears an interrupted run with a POST', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson({ run_id: 'r1', status: 'failed' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await clearEtlRun('r1');
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/admin/etl/runs/r1/clear', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
   });
 });

@@ -22,17 +22,20 @@ export function Badge({ tone = 'neutral', children }: { tone?: Tone; children: R
 
 /**
  * Map the domain statuses the operator UI displays to a badge tone, so survey
- * status (draft/published) and review decisions (pending/promoted/rejected)
- * colour consistently wherever they appear.
+ * status (draft/published), review decisions (pending/promoted/rejected), and ETL
+ * run outcomes (running/success/failed) colour consistently wherever they appear.
  */
 export function statusTone(status: string): Tone {
   switch (status) {
     case 'published':
     case 'promoted':
+    case 'success':
       return 'success';
     case 'rejected':
+    case 'failed':
       return 'danger';
     case 'pending':
+    case 'running':
       return 'warning';
     case 'draft':
       return 'brand';

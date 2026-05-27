@@ -4,6 +4,7 @@ import {
   listFreeTextForReview,
   promoteFreeText,
   rejectFreeText,
+  scrubFreeText,
   type FreeTextReviewItem,
   type ReviewStatus,
 } from '../api';
@@ -24,7 +25,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-const TABS: ReviewStatus[] = ['pending', 'promoted', 'rejected'];
+const TABS: ReviewStatus[] = ['pending', 'promoted', 'rejected', 'scrubbed'];
 
 /**
  * Reviewer PII-screening console (design §3.9/§3.10): screen high-risk free-text
@@ -77,6 +78,22 @@ export function PiiReviewView() {
       .finally(() => setBusyId(null));
   };
 
+  const scrub = (item: FreeTextReviewItem): void => {
+    // Destructive and irreversible: the PII is destroyed in raw, read-model, and
+    // the PII copy. Confirm before firing.
+    const ok = window.confirm(
+      `Permanently scrub the answer to "${item.question_name}"? ` +
+        'This destroys the text everywhere it is stored and cannot be undone.',
+    );
+    if (!ok) return;
+    setBusyId(item.id);
+    setError(null);
+    scrubFreeText(item.id)
+      .then(() => load(status))
+      .catch((err: unknown) => setError(errorMessage(err)))
+      .finally(() => setBusyId(null));
+  };
+
   const tabClass = (tab: ReviewStatus): string =>
     [
       'rounded-full px-3 py-1 text-sm font-medium capitalize transition-colors',
@@ -87,7 +104,7 @@ export function PiiReviewView() {
     <section>
       <PageHeader
         title="Free-text PII review"
-        subtitle="Promoted answers reach the analyst marts on the next ETL build. The default is redacted — promote only answers screened free of PII and proprietary content."
+        subtitle="Promoted answers reach the analyst marts on the next ETL build. The default is redacted — promote only answers screened free of PII and proprietary content. Scrub permanently destroys an answer's text everywhere it is stored; the response itself is kept."
       />
 
       <div role="tablist" className="mb-4 flex gap-2">
@@ -135,28 +152,46 @@ export function PiiReviewView() {
                   <td className="px-5 py-3 text-ink">{item.value_text ?? '—'}</td>
                   <td className="px-5 py-3 text-muted">{formatDate(item.created_at)}</td>
                   <td className="px-5 py-3">
-                    {status === 'pending' ? (
-                      <div className="flex gap-2">
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => decide(item.id, 'promote')}
-                          disabled={busyId === item.id}
-                        >
-                          Promote
-                        </Button>
+                    {status === 'scrubbed' ? (
+                      <Badge tone={statusTone('scrubbed')}>scrubbed</Badge>
+                    ) : (
+                      <div className="flex flex-wrap items-center gap-2">
+                        {status === 'pending' ? (
+                          <>
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => decide(item.id, 'promote')}
+                              disabled={busyId === item.id}
+                            >
+                              Promote
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="danger"
+                              onClick={() => decide(item.id, 'reject')}
+                              disabled={busyId === item.id}
+                            >
+                              Reject
+                            </Button>
+                          </>
+                        ) : (
+                          <Badge tone={statusTone(status)}>{status}</Badge>
+                        )}
+                        {/* Scrub stays available on pending/promoted/rejected: the
+                            PII persists in storage until it is scrubbed, whatever
+                            the review decision. */}
                         <Button
                           type="button"
                           size="sm"
                           variant="danger"
-                          onClick={() => decide(item.id, 'reject')}
+                          onClick={() => scrub(item)}
                           disabled={busyId === item.id}
                         >
-                          Reject
+                          Scrub
                         </Button>
                       </div>
-                    ) : (
-                      <Badge tone={statusTone(status)}>{status}</Badge>
                     )}
                   </td>
                 </tr>

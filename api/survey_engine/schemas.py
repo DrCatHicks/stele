@@ -142,3 +142,28 @@ class FreeTextDecisionOut(BaseModel):
     question_name: str
     status: str
     reviewed_at: datetime
+
+
+class FreeTextScrubRequest(BaseModel):
+    # Optional note (e.g. ticket reference). Not for the scrubbed content / PII.
+    reason: str | None = None
+
+
+class FreeTextScrubOut(BaseModel):
+    """Outcome of a field-level free-text scrub (design §3.8).
+
+    Counts/flags report what *this* call changed; on the idempotent path (the
+    answer was already scrubbed) `already_scrubbed` is true and they are zero/false.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    free_text_id: int
+    raw_response_id: int
+    question_name: str
+    occurrence: int
+    scrubbed_at: datetime
+    already_scrubbed: bool
+    raw_payload_scrubbed: bool
+    read_model_items_scrubbed: int
+    pii_value_cleared: bool

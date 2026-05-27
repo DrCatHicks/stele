@@ -168,6 +168,35 @@ class FreeTextReviewDecision(Base):
     note: Mapped[str | None] = mapped_column(Text, default=None)
 
 
+class FreeTextScrub(Base):
+    """Audit record that a single high-risk free-text answer was scrubbed.
+
+    Field-level scrub (design doc §3.8) is the surgical sibling of the
+    whole-respondent withdrawal: the reviewer destroys one answer's PII across the
+    raw_responses payload value, the read-model item, and
+    pii.free_text_responses.value_text, while the rest of the response survives.
+    This row is the retained evidence, keyed by the same (raw_response_id,
+    question_name, occurrence) grain the reviewer screens at. Lives in the pii
+    schema (out of dbt's reach). Unique on the grain (one scrub per answer) — the
+    idempotency anchor.
+    """
+
+    __tablename__ = "free_text_scrubs"
+    __table_args__ = {"schema": "pii"}
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    raw_response_id: Mapped[int] = mapped_column(BigInteger)
+    question_name: Mapped[str] = mapped_column(Text)
+    # Matches the scrubbed FreeTextResponse row's occurrence (M5.4); 1 for a plain
+    # free-text question.
+    occurrence: Mapped[int] = mapped_column(Integer, server_default=text("1"))
+    scrubbed_by: Mapped[int | None] = mapped_column(Integer, default=None)
+    scrubbed_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+    reason: Mapped[str | None] = mapped_column(Text, default=None)
+
+
 class Withdrawal(Base):
     """Audit record that a respondent withdrew and their data was tombstoned.
 

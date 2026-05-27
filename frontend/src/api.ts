@@ -225,12 +225,14 @@ export async function triggerWithdrawal(
 
 // --- PII free-text review (reviewer) ---------------------------------------
 
-export type ReviewStatus = 'pending' | 'promoted' | 'rejected';
+// 'scrubbed' is terminal — the answer's PII has been destroyed in place (§3.8).
+export type ReviewStatus = 'pending' | 'promoted' | 'rejected' | 'scrubbed';
 // A recorded decision is only ever one of these (pending = no decision row).
 export type DecisionStatus = 'promoted' | 'rejected';
 
 // A high-risk free-text answer in the screening queue. value_text is the PII the
-// reviewer screens; status is null while pending, else a recorded decision.
+// reviewer screens (null once scrubbed); status is null while pending, else a
+// recorded decision or 'scrubbed'.
 export interface FreeTextReviewItem {
   id: number;
   raw_response_id: number;
@@ -240,7 +242,7 @@ export interface FreeTextReviewItem {
   question_name: string;
   value_text: string | null;
   created_at: string;
-  status: DecisionStatus | null;
+  status: DecisionStatus | 'scrubbed' | null;
 }
 
 export interface FreeTextDecision {
@@ -249,6 +251,18 @@ export interface FreeTextDecision {
   question_name: string;
   status: DecisionStatus;
   reviewed_at: string;
+}
+
+export interface FreeTextScrub {
+  free_text_id: number;
+  raw_response_id: number;
+  question_name: string;
+  occurrence: number;
+  scrubbed_at: string;
+  already_scrubbed: boolean;
+  raw_payload_scrubbed: boolean;
+  read_model_items_scrubbed: number;
+  pii_value_cleared: boolean;
 }
 
 export async function listFreeTextForReview(
@@ -268,6 +282,14 @@ export async function rejectFreeText(id: number, note?: string): Promise<FreeTex
   return request<FreeTextDecision>(
     `/admin/pii/free-text/${id}/reject`,
     jsonInit('POST', { note: note ?? null }),
+  );
+}
+
+// Destroy this answer's PII in place (raw payload, read-model, PII copy). §3.8.
+export async function scrubFreeText(id: number, reason?: string): Promise<FreeTextScrub> {
+  return request<FreeTextScrub>(
+    `/admin/pii/free-text/${id}/scrub`,
+    jsonInit('POST', { reason: reason ?? null }),
   );
 }
 

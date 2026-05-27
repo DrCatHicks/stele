@@ -11,18 +11,33 @@ vi.mock('../api', async (importOriginal) => ({
   listFreeTextForReview: vi.fn(),
   promoteFreeText: vi.fn(),
   rejectFreeText: vi.fn(),
+  scrubFreeText: vi.fn(),
 }));
 
 vi.mock('../auth/AuthContext', () => ({
   useAuth: vi.fn(),
 }));
 
-const { listFreeTextForReview, promoteFreeText, rejectFreeText } = await import('../api');
+const { listFreeTextForReview, promoteFreeText, rejectFreeText, scrubFreeText } =
+  await import('../api');
 const { useAuth } = await import('../auth/AuthContext');
 const mockedList = vi.mocked(listFreeTextForReview);
 const mockedPromote = vi.mocked(promoteFreeText);
 const mockedReject = vi.mocked(rejectFreeText);
+const mockedScrub = vi.mocked(scrubFreeText);
 const mockedAuth = vi.mocked(useAuth);
+
+const SCRUB_RESULT = {
+  free_text_id: 7,
+  raw_response_id: 70,
+  question_name: 'ft_high',
+  occurrence: 1,
+  scrubbed_at: 't',
+  already_scrubbed: false,
+  raw_payload_scrubbed: true,
+  read_model_items_scrubbed: 1,
+  pii_value_cleared: true,
+};
 
 function asRole(role: string): void {
   mockedAuth.mockReturnValue({
@@ -109,6 +124,47 @@ describe('PiiReviewView', () => {
 
     await userEvent.click(screen.getByRole('tab', { name: 'promoted' }));
     await waitFor(() => expect(mockedList).toHaveBeenLastCalledWith('promoted'));
+  });
+
+  it('scrubs a pending answer after confirmation and reloads', async () => {
+    mockedScrub.mockResolvedValue(SCRUB_RESULT);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    renderView();
+    await screen.findByText('I lead the platform team');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Scrub' }));
+
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(mockedScrub).toHaveBeenCalledWith(7);
+    await waitFor(() => expect(mockedList).toHaveBeenCalledTimes(2));
+    confirmSpy.mockRestore();
+  });
+
+  it('does not scrub when the confirmation is dismissed', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    renderView();
+    await screen.findByText('I lead the platform team');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Scrub' }));
+
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(mockedScrub).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  it('shows scrubbed answers as terminal, with no scrub action', async () => {
+    // The scrubbed queue carries terminal rows: a status badge, no value, and no
+    // actions (promote/reject/scrub all gone).
+    mockedList.mockResolvedValue([{ ...PENDING, value_text: null, status: 'scrubbed' }]);
+    renderView();
+    await screen.findByText('ft_high');
+
+    await userEvent.click(screen.getByRole('tab', { name: 'scrubbed' }));
+
+    // The status badge (a span) — distinct from the same-named tab button.
+    expect(await screen.findByText('scrubbed', { selector: 'span' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Scrub' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Promote' })).not.toBeInTheDocument();
   });
 
   it('refuses non-reviewer roles', async () => {

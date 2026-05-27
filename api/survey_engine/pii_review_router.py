@@ -25,6 +25,8 @@ from api.survey_engine.schemas import (
     FreeTextDecisionOut,
     FreeTextDecisionRequest,
     FreeTextReviewItemOut,
+    FreeTextScrubOut,
+    FreeTextScrubRequest,
 )
 
 router = APIRouter(prefix="/admin/pii/free-text", tags=["admin"])
@@ -38,7 +40,7 @@ Reviewer = Annotated[AuthenticatedUser, Depends(require_role("reviewer"))]
 async def list_for_review(
     session: SessionDep,
     reviewer: Reviewer,
-    status: Literal["pending", "promoted", "rejected"] = "pending",
+    status: Literal["pending", "promoted", "rejected", "scrubbed"] = "pending",
 ) -> list[FreeTextReviewItemOut]:
     items = await service.list_free_text_for_review(session, status=status)
     return [FreeTextReviewItemOut.model_validate(i) for i in items]
@@ -79,3 +81,24 @@ async def reject(
     reviewer: Reviewer,
 ) -> FreeTextDecisionOut:
     return await _decide(session, free_text_id, reviewer, "rejected", body.note)
+
+
+@router.post("/{free_text_id}/scrub", response_model=FreeTextScrubOut)
+async def scrub(
+    free_text_id: int,
+    body: FreeTextScrubRequest,
+    session: SessionDep,
+    reviewer: Reviewer,
+) -> FreeTextScrubOut:
+    """Destroy this answer's PII in place across raw payload, read-model, and the
+    PII copy (field-level scrub, design §3.8). Destructive and reviewer-only;
+    idempotent (a repeat scrub returns the original record)."""
+    try:
+        result = await service.scrub_free_text(session, free_text_id, reviewer.id, body.reason)
+    except service.FreeTextResponseNotFound:
+        raise HTTPException(status_code=404, detail="free-text answer not found") from None
+    except service.ScrubIncomplete as exc:
+        # The raw value wasn't verifiably nulled; nothing was committed. 409 so the
+        # operator knows the answer is NOT scrubbed and can retry (vs a silent 200).
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    return FreeTextScrubOut.model_validate(result)

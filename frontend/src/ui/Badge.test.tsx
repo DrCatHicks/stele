@@ -17,6 +17,7 @@ describe('statusTone', () => {
     ['rejected', 'danger'],
     ['pending', 'warning'],
     ['draft', 'brand'],
+    ['scrubbed', 'neutral'],
     // ETL run outcomes.
     ['success', 'success'],
     ['running', 'warning'],

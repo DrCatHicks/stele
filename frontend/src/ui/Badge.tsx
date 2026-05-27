@@ -39,6 +39,9 @@ export function statusTone(status: string): Tone {
       return 'warning';
     case 'draft':
       return 'brand';
+    // 'scrubbed' is terminal/erased — neutral grey, distinct from a rejection.
+    case 'scrubbed':
+      return 'neutral';
     default:
       return 'neutral';
   }

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
-from sqlalchemy import CursorResult, delete, func, select, update
+from sqlalchemy import CursorResult, delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +26,7 @@ from api.survey_engine import round_trip
 from api.survey_engine.models import (
     FreeTextResponse,
     FreeTextReviewDecision,
+    FreeTextScrub,
     RawResponse,
     Response,
     ResponseItem,
@@ -68,6 +69,18 @@ class SubmissionRejected(Exception):
 
 class FreeTextResponseNotFound(Exception):
     """No high-risk free-text answer with the given id (reviewer screening)."""
+
+
+class ScrubIncomplete(Exception):
+    """A field-level scrub could not be verified to have nulled the raw value.
+
+    Raised (and the transaction rolled back) when the live raw_responses row was
+    matched but its targeted value did not become JSON null — i.e. the resolved
+    path was wrong or out of range. Erasure code must not commit a scrub audit row
+    (and clear the PII copy) while PII survives in the append-only source, and the
+    audit-row idempotency guard would otherwise lock that partial state in. No
+    data is changed; the caller may retry.
+    """
 
 
 class InvalidShortCode(Exception):
@@ -514,6 +527,26 @@ class FreeTextDecisionResult:
 
 
 @dataclass(frozen=True)
+class FreeTextScrubResult:
+    """Outcome of a field-level scrub (design §3.8).
+
+    On the idempotent path (the answer was already scrubbed) `already_scrubbed`
+    is true and the counts reflect the original scrub's effect as zero — nothing
+    was changed this call. `scrubbed_at` is the original timestamp in that case.
+    """
+
+    free_text_id: int
+    raw_response_id: int
+    question_name: str
+    occurrence: int
+    scrubbed_at: datetime
+    already_scrubbed: bool
+    raw_payload_scrubbed: bool
+    read_model_items_scrubbed: int
+    pii_value_cleared: bool
+
+
+@dataclass(frozen=True)
 class WithdrawalResult:
     """Outcome of a withdrawal: the audit record plus what this call erased.
 
@@ -595,9 +628,10 @@ async def withdraw_respondent(
     responses_purged = responses_result.rowcount or 0
 
     # Step 2 — tombstone raw: null the four content columns, keep the row so the
-    # append-only audit log stays structurally complete. This is the sole
-    # sanctioned UPDATE of raw_responses (CLAUDE.md / design §3.8); id,
-    # respondent_id, survey_id, survey_version and submitted_at are preserved.
+    # append-only audit log stays structurally complete. This and the field-level
+    # scrub (scrub_free_text) are the only sanctioned UPDATEs of raw_responses
+    # (CLAUDE.md / design §3.8); id, respondent_id, survey_id, survey_version and
+    # submitted_at are preserved.
     raw_result = cast(
         CursorResult[Any],
         await session.execute(
@@ -636,8 +670,12 @@ async def list_withdrawals(
 
 
 # Reviewer screening states. 'pending' = a high-risk free-text row with no
-# decision yet (LEFT JOIN miss); the other two read the recorded decision.
-ReviewStatus = Literal["pending", "promoted", "rejected"]
+# decision yet (LEFT JOIN miss); 'promoted'/'rejected' read the recorded decision;
+# 'scrubbed' = the answer's PII has been destroyed in place (field-level scrub,
+# §3.8). Scrub is terminal and takes precedence: a scrubbed answer leaves the
+# pending/promoted/rejected views (even if it once had a decision) and shows only
+# under 'scrubbed', with a null value_text — the content is gone.
+ReviewStatus = Literal["pending", "promoted", "rejected", "scrubbed"]
 
 
 async def list_free_text_for_review(
@@ -646,14 +684,17 @@ async def list_free_text_for_review(
     limit: int = 100,
     offset: int = 0,
 ) -> list[FreeTextReviewItem]:
-    """High-risk free-text answers in the reviewer queue (design §3.9).
+    """High-risk free-text answers in the reviewer queue (design §3.9 / §3.8).
 
     Joins pii.free_text_responses to its raw row (for respondent/survey context)
-    and LEFT JOINs the decision table. 'pending' filters to answers with no
-    decision; 'promoted'/'rejected' filter to the recorded outcome. Carries the
-    screened value_text — gated to the reviewer role at the route.
+    and LEFT JOINs both the decision table and the scrub audit. 'pending' filters
+    to undecided, un-scrubbed answers; 'promoted'/'rejected' to the recorded
+    decision on still-present (un-scrubbed) answers; 'scrubbed' to answers whose
+    PII has been destroyed. Carries the screened value_text (null once scrubbed) —
+    gated to the reviewer role at the route.
     """
     decision = FreeTextReviewDecision
+    scrub = FreeTextScrub
     query = (
         select(
             FreeTextResponse.id,
@@ -666,6 +707,7 @@ async def list_free_text_for_review(
             FreeTextResponse.value_text,
             FreeTextResponse.created_at,
             decision.status,
+            scrub.id.label("scrub_id"),
         )
         .join(RawResponse, RawResponse.id == FreeTextResponse.raw_response_id)
         .outerjoin(
@@ -674,14 +716,22 @@ async def list_free_text_for_review(
             & (decision.question_name == FreeTextResponse.question_name)
             & (decision.occurrence == FreeTextResponse.occurrence),
         )
+        .outerjoin(
+            scrub,
+            (scrub.raw_response_id == FreeTextResponse.raw_response_id)
+            & (scrub.question_name == FreeTextResponse.question_name)
+            & (scrub.occurrence == FreeTextResponse.occurrence),
+        )
         .order_by(FreeTextResponse.created_at.desc())
         .limit(limit)
         .offset(offset)
     )
-    if status == "pending":
-        query = query.where(decision.status.is_(None))
+    if status == "scrubbed":
+        query = query.where(scrub.id.isnot(None))
+    elif status == "pending":
+        query = query.where(decision.status.is_(None), scrub.id.is_(None))
     else:
-        query = query.where(decision.status == status)
+        query = query.where(decision.status == status, scrub.id.is_(None))
 
     rows = (await session.execute(query)).all()
     return [
@@ -695,7 +745,9 @@ async def list_free_text_for_review(
             occurrence=r.occurrence,
             value_text=r.value_text,
             created_at=r.created_at,
-            status=r.status,
+            # Scrub is terminal: report it as the status regardless of any prior
+            # promote/reject decision the row may still carry.
+            status="scrubbed" if r.scrub_id is not None else r.status,
         )
         for r in rows
     ]
@@ -754,4 +806,208 @@ async def record_free_text_decision(
         question_name=free_text.question_name,
         status=status,
         reviewed_at=decided_at,
+    )
+
+
+def _scrub_target(
+    raw: RawResponse, question_name: str, occurrence: int
+) -> tuple[list[str], str, list[str] | None]:
+    """Resolve where a scrubbed answer lives, from the row's own frozen definition.
+
+    Returns ``(raw_path, item_key, item_path)``:
+
+    - ``raw_path`` — the jsonb path inside ``raw_responses.payload`` to null.
+    - ``item_key`` — the ``response_items.question_name`` (top-level payload key)
+      holding the read-model copy.
+    - ``item_path`` — the jsonb path inside that item's ``value`` to null, or
+      ``None`` to null the whole value.
+
+    A plain free-text answer sits at ``payload[name]`` (item_key = name, whole
+    value nulled). A paneldynamic free-text cell (M5.4) sits at
+    ``payload[panel][occurrence-1][element]`` (item_key = panel, the cell nulled
+    inside the array). The panel/element split is read from the response's own
+    definition_snapshot via the one shared free-text parser — never by splitting
+    the composite "panel.element" name. If the question can't be located (e.g. a
+    tombstoned row with a null snapshot, which a live free-text row never has), we
+    fall back to the plain top-level path — correct for every non-panel answer, and
+    for the (unreachable) case where it would be wrong for a panel, scrub_free_text
+    verifies the raw value actually became null and aborts loudly rather than
+    committing a partial erasure.
+    """
+    snapshot = raw.definition_snapshot or {}
+    definition = snapshot.get("definition") if isinstance(snapshot, dict) else None
+    if isinstance(definition, dict):
+        for question in extract_free_text_questions(definition):
+            if question.name != question_name:
+                continue
+            if question.panel_name is not None and question.element_name is not None:
+                idx = str(occurrence - 1)
+                return (
+                    [question.panel_name, idx, question.element_name],
+                    question.panel_name,
+                    [idx, question.element_name],
+                )
+            break
+    return ([question_name], question_name, None)
+
+
+async def scrub_free_text(
+    session: AsyncSession,
+    free_text_id: int,
+    reviewer_id: int | None,
+    reason: str | None = None,
+) -> FreeTextScrubResult:
+    """Field-level scrub: destroy one high-risk free-text answer's PII in place,
+    leaving the rest of the response intact (design doc §3.8).
+
+    The surgical sibling of withdraw_respondent. In one transaction it nulls the
+    answer across all three durable copies — the raw_responses payload value (the
+    append-only ETL source), the operational read-model item, and
+    pii.free_text_responses.value_text — and records a scrub audit row. The value
+    is nulled *in place* (the payload key is kept), so downstream the answer still
+    reads as shown + answered (jsonb_exists stays true) with a null value — the
+    same redacted state high-risk free text already has in the marts — rather than
+    collapsing into "skipped" (CLAUDE.md §"silent defaults"). shown_questions and
+    every other answer are untouched, so the response stays in the warehouse.
+
+    This is the second sanctioned UPDATE of append-only raw_responses, alongside
+    the withdrawal tombstone (CLAUDE.md / design §3.8, invariant 1); it never
+    DELETEs a raw row.
+
+    Idempotent: a repeat scrub of an already-scrubbed answer is a no-op that
+    returns the original record. Raises FreeTextResponseNotFound if free_text_id
+    is unknown.
+    """
+    free_text = (
+        await session.execute(select(FreeTextResponse).where(FreeTextResponse.id == free_text_id))
+    ).scalar_one_or_none()
+    if free_text is None:
+        raise FreeTextResponseNotFound
+
+    # Idempotency: the (raw_response_id, question_name, occurrence) unique
+    # constraint is the real guard; this check makes the common repeat a clean
+    # no-op that preserves the original scrubbed_at.
+    existing = (
+        await session.execute(
+            select(FreeTextScrub).where(
+                FreeTextScrub.raw_response_id == free_text.raw_response_id,
+                FreeTextScrub.question_name == free_text.question_name,
+                FreeTextScrub.occurrence == free_text.occurrence,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return FreeTextScrubResult(
+            free_text_id=free_text_id,
+            raw_response_id=free_text.raw_response_id,
+            question_name=free_text.question_name,
+            occurrence=free_text.occurrence,
+            scrubbed_at=existing.scrubbed_at,
+            already_scrubbed=True,
+            raw_payload_scrubbed=False,
+            read_model_items_scrubbed=0,
+            pii_value_cleared=False,
+        )
+
+    raw = (
+        await session.execute(
+            select(RawResponse).where(RawResponse.id == free_text.raw_response_id)
+        )
+    ).scalar_one()
+    raw_path, item_key, item_path = _scrub_target(
+        raw, free_text.question_name, free_text.occurrence
+    )
+
+    # 1 — null the value in the append-only source, in place. The payload-not-null
+    # guard skips a tombstoned row. create_missing is false: only an existing key
+    # is nulled, never invented. RETURNING reports the post-update type at the
+    # target path so we can *verify* the erasure rather than trust that a row
+    # matched — jsonb_set is a silent no-op when the path is absent/out of range,
+    # which would otherwise leave PII in the source while reporting success.
+    returned = (
+        await session.execute(
+            text(
+                "update app.raw_responses "
+                "set payload = jsonb_set(payload, :path ::text[], 'null'::jsonb, false) "
+                "where id = :raw_id and payload is not null "
+                "returning jsonb_typeof(payload #> :path ::text[]) as leaf_type"
+            ).bindparams(path=raw_path, raw_id=raw.id)
+        )
+    ).all()
+    # No row → tombstoned/null payload: the source already holds no PII, so the
+    # scrub is vacuously satisfied (proceed to clear the copy + audit). A matched
+    # row whose target did not become JSON null (leaf_type != 'null', incl. an
+    # absent path → NULL typeof) means the resolved path was wrong/out of range —
+    # abort loudly so no audit row locks in a partial erasure.
+    raw_payload_scrubbed = len(returned) > 0
+    if raw_payload_scrubbed and returned[0].leaf_type != "null":
+        # Capture before rollback: rollback expires the ORM row, so reading its
+        # attributes afterwards would trigger lazy IO outside the async context.
+        detail = (
+            f"raw value for {free_text.question_name!r} (occurrence "
+            f"{free_text.occurrence}) was not nulled; scrub aborted"
+        )
+        await session.rollback()
+        raise ScrubIncomplete(detail)
+
+    # 2 — mirror the null into the operational read-model item. A plain answer's
+    # item value is nulled wholesale; a panel cell is nulled inside the item's
+    # array. No-op when the read-model row is absent.
+    if item_path is None:
+        read_model_result = cast(
+            CursorResult[Any],
+            await session.execute(
+                update(ResponseItem)
+                .where(
+                    ResponseItem.response_id.in_(
+                        select(Response.id).where(Response.raw_response_id == raw.id)
+                    ),
+                    ResponseItem.question_name == item_key,
+                )
+                .values(value=None)
+            ),
+        )
+    else:
+        read_model_result = cast(
+            CursorResult[Any],
+            await session.execute(
+                text(
+                    "update app.response_items "
+                    "set value = jsonb_set(value, :path ::text[], 'null'::jsonb, false) "
+                    "where response_id in "
+                    "(select id from app.responses where raw_response_id = :raw_id) "
+                    "and question_name = :item_key and value is not null"
+                ).bindparams(path=item_path, raw_id=raw.id, item_key=item_key)
+            ),
+        )
+    read_model_items_scrubbed = read_model_result.rowcount or 0
+
+    # 3 — clear the reviewer's PII copy (keep the row as the screening anchor).
+    pii_value_cleared = free_text.value_text is not None
+    free_text.value_text = None
+
+    # 4 — record the scrub audit row.
+    scrubbed_at = datetime.now(UTC)
+    session.add(
+        FreeTextScrub(
+            raw_response_id=free_text.raw_response_id,
+            question_name=free_text.question_name,
+            occurrence=free_text.occurrence,
+            scrubbed_by=reviewer_id,
+            scrubbed_at=scrubbed_at,
+            reason=reason,
+        )
+    )
+
+    await session.commit()
+    return FreeTextScrubResult(
+        free_text_id=free_text_id,
+        raw_response_id=free_text.raw_response_id,
+        question_name=free_text.question_name,
+        occurrence=free_text.occurrence,
+        scrubbed_at=scrubbed_at,
+        already_scrubbed=False,
+        raw_payload_scrubbed=raw_payload_scrubbed,
+        read_model_items_scrubbed=read_model_items_scrubbed,
+        pii_value_cleared=pii_value_cleared,
     )

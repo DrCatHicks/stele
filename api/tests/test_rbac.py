@@ -172,6 +172,9 @@ PII_REVIEW_ROUTES: list[tuple[str, str, dict[str, Any] | None, int]] = [
     ("get", "/admin/pii/free-text", None, 200),
     ("post", "/admin/pii/free-text/999999/promote", {}, 404),
     ("post", "/admin/pii/free-text/999999/reject", {}, 404),
+    # Field-level scrub (§3.8) is reviewer-gated like promote/reject — destructive
+    # PII erasure stays with the PII-cleared role, not the admin.
+    ("post", "/admin/pii/free-text/999999/scrub", {}, 404),
 ]
 GATED_PII_REVIEW = [route[:3] for route in PII_REVIEW_ROUTES]
 

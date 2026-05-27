@@ -468,6 +468,16 @@ Append-only audit semantics and GDPR right-to-erasure are reconciled via an expl
 
 The withdrawal record itself is retained as evidence that the deletion occurred. Designing this up front avoids the retrofit work that derails research projects mid-flight.
 
+**Field-level scrub.** Whole-respondent withdrawal is a blunt instrument: it erases everything a respondent submitted. The common PII incident is narrower — a respondent typed an identifier (a name, an email, a client name) into a *single* high-risk free-text answer, and only that answer must be erased while the rest of the response stays in the study. Field-level scrub is the surgical sibling of withdrawal, keyed at the reviewer's `(raw_response_id, question_name, occurrence)` grain (§3.9):
+
+1. **Scrub recorded** in `pii.free_text_scrubs` with the actor (`scrubbed_by`), timestamp, and an optional non-PII note. Unique on the grain — the idempotency anchor.
+2. **Raw value nulled in place**: the answer's value in `raw_responses.payload` is set to JSON null via `jsonb_set`, *keeping the key*. This is the second sanctioned UPDATE of append-only `raw_responses` (the first is the withdrawal tombstone); it never deletes a row, and `shown_questions` and every other answer are left intact. Keeping the key (rather than dropping it) means the answer still reads as **shown and answered with a null value** downstream — the same redacted state a high-risk answer already has in the marts — rather than collapsing into "skipped," which would corrupt routing fidelity (§3.5).
+3. **Read-model mirrored**: the corresponding `app.response_items` value is nulled the same way (wholesale for a plain answer, in-array for a paneldynamic cell).
+4. **PII copy cleared**: `pii.free_text_responses.value_text` for the answer is set null; the row is kept as the screening anchor and now reads as `scrubbed`.
+5. **Marts rebuilt** on the next dbt run: the response and its other answers remain, but the scrubbed answer carries no value — already the default for high-risk free text, so no fact-grain or row-count change.
+
+Scrub is a **reviewer** capability (the PII-cleared role that can see the text; §3.10), terminal, and idempotent. It needs no new database grant: every write lands on a table `stele_api` can already reach (the raw UPDATE-only tombstone privilege, `app.response_items`, and `pii.*` by default privilege).
+
 ### 3.9 Free-text routing and PII
 
 Tech-worker respondents are particularly likely to include proprietary content in free-text fields without explicit awareness. The schema treats free-text values as PII-adjacent by default:
@@ -488,11 +498,11 @@ Application roles:
 
 - **admin** — full operator: manages users, triggers withdrawals / GDPR erasure, and provisions analyst and reviewer database credentials.
 - **researcher** — authors, edits, and publishes surveys.
-- **reviewer** — screens `high`-risk free-text and promotes safe responses to the marts (§3.9). Cannot author or publish.
+- **reviewer** — screens `high`-risk free-text and promotes safe responses to the marts (§3.9), and scrubs individual answers carrying PII (the field-level scrub of §3.8). Cannot author or publish.
 
 Authentication: credentials are stored with an argon2id hash; sessions are server-side and revocable, carried in a signed, httpOnly, secure cookie. The initial admin is bootstrapped from the environment, never hard-coded.
 
-Operation → role: survey create/edit/publish → researcher or admin; withdrawal / erasure → admin; free-text promotion → reviewer. Respondent submission and survey retrieval remain **unauthenticated** — respondents follow a distributed link.
+Operation → role: survey create/edit/publish → researcher or admin; withdrawal / erasure → admin; free-text promotion and field-level scrub → reviewer. Respondent submission and survey retrieval remain **unauthenticated** — respondents follow a distributed link.
 
 Analyst and reviewer *data* access is not mediated by the application. Analysts query the `marts` schema and reviewers the `pii` schema directly via Postgres, using the `stele_analyst` / `stele_pii_reviewer` roles of §3.3. The admin provisions, rotates, and revokes those database credentials as an operational procedure.
 

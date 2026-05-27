@@ -52,8 +52,10 @@ uv run mypy api/ && uv run ruff check .
   tests assert (login fields, nav links, console buttons, the erasure result string), so
   the behaviour suites carried over unchanged.
 
-## Known follow-up
+## Bundle split
 
-- The SPA is a single bundle, so CodeMirror's weight (~430 kB) loads on the public
-  respondent path too. A route-level code split of `/admin/*` would trim it. Out of M8
-  scope; noted here and in the M8.5 commit.
+`/admin/*` is a lazy chunk (`App.tsx` → `React.lazy(() => import('./admin/AdminApp'))`),
+so CodeMirror and the admin views don't load on the public respondent path. `pnpm build`
+emits a separate `AdminApp-*.js` (~448 kB) distinct from the entry chunk; `App.test`
+covers the routing boundary. The entry chunk that the respondent path loads is dominated
+by survey-core, which the runner genuinely needs.

@@ -986,25 +986,57 @@ async def scrub_free_text(
     pii_value_cleared = free_text.value_text is not None
     free_text.value_text = None
 
-    # 4 — record the scrub audit row.
+    # 4 — record the scrub audit row. Capture the grain into locals first: a
+    # rollback (the concurrent-race path below) expires the ORM row, so reading
+    # its attributes afterwards would trigger lazy IO outside the async context.
+    raw_response_id = free_text.raw_response_id
+    question_name = free_text.question_name
+    occurrence = free_text.occurrence
     scrubbed_at = datetime.now(UTC)
     session.add(
         FreeTextScrub(
-            raw_response_id=free_text.raw_response_id,
-            question_name=free_text.question_name,
-            occurrence=free_text.occurrence,
+            raw_response_id=raw_response_id,
+            question_name=question_name,
+            occurrence=occurrence,
             scrubbed_by=reviewer_id,
             scrubbed_at=scrubbed_at,
             reason=reason,
         )
     )
 
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        # Lost the race on uq_free_text_scrubs_raw_question_occurrence: a
+        # concurrent scrub of the same answer committed first. Its raw/read-model/
+        # PII nulling is the same erasure we attempted, so the idempotent outcome
+        # holds — return the winning record instead of surfacing a 500.
+        await session.rollback()
+        existing = (
+            await session.execute(
+                select(FreeTextScrub).where(
+                    FreeTextScrub.raw_response_id == raw_response_id,
+                    FreeTextScrub.question_name == question_name,
+                    FreeTextScrub.occurrence == occurrence,
+                )
+            )
+        ).scalar_one()
+        return FreeTextScrubResult(
+            free_text_id=free_text_id,
+            raw_response_id=raw_response_id,
+            question_name=question_name,
+            occurrence=occurrence,
+            scrubbed_at=existing.scrubbed_at,
+            already_scrubbed=True,
+            raw_payload_scrubbed=False,
+            read_model_items_scrubbed=0,
+            pii_value_cleared=False,
+        )
     return FreeTextScrubResult(
         free_text_id=free_text_id,
-        raw_response_id=free_text.raw_response_id,
-        question_name=free_text.question_name,
-        occurrence=free_text.occurrence,
+        raw_response_id=raw_response_id,
+        question_name=question_name,
+        occurrence=occurrence,
         scrubbed_at=scrubbed_at,
         already_scrubbed=False,
         raw_payload_scrubbed=raw_payload_scrubbed,

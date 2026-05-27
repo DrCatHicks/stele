@@ -7,6 +7,7 @@ import {
   type WithdrawalResult,
 } from '../api';
 import { useAuth } from '../auth/AuthContext';
+import { Alert, Button, Card, CardBody, EmptyState, Field, LoadingState, PageHeader } from '../ui';
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -51,7 +52,7 @@ export function GdprView() {
   }, []);
 
   if (user && user.role !== 'admin') {
-    return <div role="alert">Only admins can access the GDPR console.</div>;
+    return <Alert tone="error">Only admins can access the GDPR console.</Alert>;
   }
 
   const handleErase = (): void => {
@@ -81,70 +82,80 @@ export function GdprView() {
 
   return (
     <section>
-      <h1>GDPR / erasure</h1>
+      <PageHeader
+        title="GDPR / erasure"
+        subtitle="Permanently erase a respondent's data and review the erasure audit."
+      />
 
-      <div style={{ marginBottom: '1.5rem' }}>
-        <h2>Erase a respondent</h2>
-        <label>
-          Respondent ID{' '}
-          <input
-            type="text"
-            value={respondentId}
-            onChange={(e) => setRespondentId(e.target.value)}
-            placeholder="respondent UUID"
-            aria-label="Respondent ID"
-          />
-        </label>{' '}
-        <label>
-          Reason (optional){' '}
-          <input
-            type="text"
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="ticket reference"
-            aria-label="Reason"
-          />
-        </label>{' '}
-        <button type="button" onClick={handleErase} disabled={busy || !respondentId.trim()}>
-          {busy ? 'Erasing…' : 'Erase respondent'}
-        </button>
-        {lastResult ? (
-          <p role="status">
-            {lastResult.already_withdrawn
-              ? 'Already withdrawn — no further data to erase.'
-              : `Erased: ${lastResult.raw_rows_tombstoned} raw row(s) tombstoned, ` +
-                `${lastResult.responses_purged} response(s) purged, ` +
-                `${lastResult.pii_rows_deleted} PII row(s) deleted.`}
-          </p>
-        ) : null}
-      </div>
+      <Card className="mb-6">
+        <CardBody className="flex flex-col gap-4">
+          <h2 className="text-sm font-semibold text-ink">Erase a respondent</h2>
+          <div className="flex flex-wrap items-end gap-3">
+            <Field
+              label="Respondent ID"
+              className="min-w-56 flex-1"
+              value={respondentId}
+              onChange={(e) => setRespondentId(e.target.value)}
+              placeholder="respondent UUID"
+            />
+            <Field
+              label="Reason"
+              className="min-w-56 flex-1"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="ticket reference (optional)"
+            />
+            <Button
+              type="button"
+              variant="danger"
+              onClick={handleErase}
+              disabled={busy || !respondentId.trim()}
+            >
+              {busy ? 'Erasing…' : 'Erase respondent'}
+            </Button>
+          </div>
+          {lastResult ? (
+            <Alert tone="success">
+              {lastResult.already_withdrawn
+                ? 'Already withdrawn — no further data to erase.'
+                : `Erased: ${lastResult.raw_rows_tombstoned} raw row(s) tombstoned, ` +
+                  `${lastResult.responses_purged} response(s) purged, ` +
+                  `${lastResult.pii_rows_deleted} PII row(s) deleted.`}
+            </Alert>
+          ) : null}
+        </CardBody>
+      </Card>
 
-      {error ? <div role="alert">Error: {error}</div> : null}
+      {error ? <Alert tone="error">Error: {error}</Alert> : null}
 
-      <h2>Erasure audit</h2>
+      <h2 className="mb-2 text-sm font-semibold text-ink">Erasure audit</h2>
       {audit === null ? (
-        <div role="status">Loading…</div>
+        <LoadingState />
       ) : audit.length === 0 ? (
-        <p>No withdrawals recorded.</p>
+        <EmptyState>No withdrawals recorded.</EmptyState>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Respondent</th>
-              <th>Requested</th>
-              <th>Reason</th>
-            </tr>
-          </thead>
-          <tbody>
-            {audit.map((w) => (
-              <tr key={w.id}>
-                <td>{w.respondent_id}</td>
-                <td>{new Date(w.requested_at).toLocaleString()}</td>
-                <td>{w.reason ?? '—'}</td>
+        <Card>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs uppercase tracking-wide text-faint">
+                <th className="px-5 py-2 font-medium">Respondent</th>
+                <th className="px-5 py-2 font-medium">Requested</th>
+                <th className="px-5 py-2 font-medium">Reason</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {audit.map((w) => (
+                <tr key={w.id} className="border-t border-border">
+                  <td className="px-5 py-2 font-mono text-xs text-muted">{w.respondent_id}</td>
+                  <td className="px-5 py-2 text-muted">
+                    {new Date(w.requested_at).toLocaleDateString()}
+                  </td>
+                  <td className="px-5 py-2 text-ink">{w.reason ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
       )}
     </section>
   );

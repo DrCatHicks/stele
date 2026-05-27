@@ -8,8 +8,10 @@ session (publish is author-gated, submit is public), then the scrub endpoint is
 driven over HTTP as a logged-in reviewer.
 
 The warehouse-side invariance is preserved by construction and needs no new dbt
-test: dbt (stele_etl) has no pii access, so it cannot even see the scrub, and a
-scrubbed answer is deliberately indistinguishable in the marts from any other
+test: stele_etl has no SELECT on pii.free_text_scrubs (it isn't a declared ETL
+source, and pii default privileges grant stele_etl nothing), so dbt cannot even
+see the scrub, and a scrubbed answer is deliberately indistinguishable in the
+marts from any other
 redacted high-risk answer (null value_text, value_text_redacted=true) — already
 covered by free_text_redaction_parity, shown_set_integrity, and row-count parity.
 The one scrub-specific guarantee that *could* regress — that nulling the value in

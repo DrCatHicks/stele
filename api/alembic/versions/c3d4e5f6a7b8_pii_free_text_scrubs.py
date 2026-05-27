@@ -15,12 +15,16 @@ reviewer screens at. The unique constraint enforces one scrub record per answer
 and is the structural anchor for the idempotent re-scrub path.
 
 Lives in the pii schema: question_name is harmless but the row points at a
-specific respondent's answer, and the schema is out of dbt's reach (stele_etl has
-no pii access), so scrub records can never leak into the warehouse.
+specific respondent's answer. stele_etl holds USAGE on schema pii plus a scoped
+SELECT on the one declared ETL source there (pii.free_text_review_decisions; see
+that migration), but it gets no SELECT on this table — pii default privileges
+grant stele_etl nothing, and only an explicit per-table GRANT would expose a pii
+table to ETL (the model-C least-privilege pattern). So scrub records can never
+leak into the warehouse.
 
 No grants here: the pii schema's ALTER DEFAULT PRIVILEGES already grant stele_api
 INSERT/UPDATE/SELECT (+ sequence USAGE) and stele_pii_reviewer SELECT/UPDATE, so
-this table inherits them. The scrub's UPDATEs all land on tables stele_api can
+this table inherits them (and stele_etl, deliberately, does not). The scrub's UPDATEs all land on tables stele_api can
 already write: raw_responses (the same UPDATE-only tombstone privilege as
 withdrawal — never DELETE; invariant 1 / design §3.8), app.response_items (app
 default privileges), and pii.free_text_responses.value_text (pii default

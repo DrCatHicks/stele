@@ -46,7 +46,8 @@ uv run mypy api/ && uv run ruff check .
   `submitResponse`/API call — so no synthetic row reaches the append-only
   `app.raw_responses` (invariant 1). Pinned by `SurveyPreview.test`'s no-network assertion.
 - **Response counts exclude withdrawn respondents.** The count joins `app.raw_responses`
-  with `payload IS NOT NULL`, the live-row filter the tombstone workflow relies on.
+  with `definition_snapshot IS NOT NULL`, the canonical live-row filter dbt's
+  stg_raw_responses uses (the tombstone workflow nulls all content columns together).
 - **Accessible names preserved.** The restyle kept every label/role/text the existing
   tests assert (login fields, nav links, console buttons, the erasure result string), so
   the behaviour suites carried over unchanged.

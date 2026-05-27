@@ -19,8 +19,9 @@ raw-JSON `<textarea>` editor, survey-core rendered with no theme imported). Scop
 areas, sequenced **demo-first** (the M7 client-demo is the driver).
 
 **Decisions:**
-- Respondent runner + preview lean on **SurveyJS's own theming** (`defaultV2.css` + `applyTheme`;
-  survey-core 1.12.62 ships a `themes/` dir).
+- Respondent runner + preview lean on **SurveyJS's own theming** — importing
+  `survey-core/defaultV2.min.css` applies its default theme (the `#19b394` brand the chrome
+  mirrors); no `applyTheme` call needed.
 - Operator chrome = **Tailwind**, with the `@theme` palette aligned to SurveyJS `--sjs-*` CSS
   variables (one source of truth; avoids two-palette drift).
 - Survey-editor code editor = **CodeMirror 6** (locked; chosen over Monaco for bundle size).

@@ -18,7 +18,7 @@ const mockedLogin = vi.mocked(login);
 const USER: User = {
   id: 1,
   email: 'admin@example.com',
-  role: 'admin',
+  roles: ['admin'],
   disabled: false,
   created_at: 't',
 };

@@ -1,9 +1,11 @@
 # Roadmap & backlog
 
-Status as of 2026-05-27. M0–M7 are merged to `main` (full planned roadmap delivered:
+Status as of 2026-05-27. M0–M8 are merged to `main` (full planned roadmap delivered:
 guardrails → vertical slice → PII/withdrawal → admin/access-control → publish gate →
-question-type breadth → ETL maturity → deployment). This document tracks the **active
-milestone** and the **queued backlog** that future milestones draw from.
+question-type breadth → ETL maturity → deployment → operator/respondent UI). Interim
+post-M8 enhancements also shipped (custom short codes + copy-link, admin-triggered ETL with
+live feedback, reviewer field-level PII scrub). This document tracks the **active milestone**
+and the **queued backlog** that future milestones draw from.
 
 For the authoritative architecture, see `survey-engine-design-doc.md` (esp. §5 deferred
 decisions). For per-story progress detail, see the delivery-plan memory.
@@ -12,32 +14,37 @@ decisions). For per-story progress detail, see the delivery-plan memory.
 
 ## Active milestone
 
-### M8 — Operator & respondent UI
+### M9 — User administration & multi-role access control
 
-First UI-centric milestone. The operator UI shipped in M3.3 is intentionally bare (no CSS,
-raw-JSON `<textarea>` editor, survey-core rendered with no theme imported). Scope: all four UI
-areas, sequenced **demo-first** (the M7 client-demo is the driver).
+Adds an admin UI to manage operator accounts — create users, grant/revoke roles, enable/disable,
+reset passwords — plus a read-only view of the analyst/reviewer DB-credential registry. Builds on
+the M3 auth foundation (`app.users`/`app.sessions`, `require_role`, the lazy-loaded `/admin/*`
+shell). Today the only way to create a user is the `scripts/bootstrap_admin.py` CLI; M9 closes that
+gap. Extends M3.5's read-only `GET /admin/db-credentials` into the UI.
 
-**Decisions:**
-- Respondent runner + preview lean on **SurveyJS's own theming** — importing
-  `survey-core/defaultV2.min.css` applies its default theme (the `#19b394` brand the chrome
-  mirrors); no `applyTheme` call needed.
-- Operator chrome = **Tailwind**, with the `@theme` palette aligned to SurveyJS `--sjs-*` CSS
-  variables (one source of truth; avoids two-palette drift).
-- Survey-editor code editor = **CodeMirror 6** (locked; chosen over Monaco for bundle size).
-- The SurveyJS **Creator** (visual drag-drop builder) stays deferred (§5). M8 improves UX *around*
-  the LLM-assisted JSON workflow, it does not replace it.
+**Decisions** (user-confirmed):
+- **Multi-role per user** (chosen over keeping one role). New `app.user_roles` join table replaces
+  the single `app.users.role` column; `AuthenticatedUser.role` → `roles`, `require_role` checks set
+  intersection, frontend `user.role` → `user.roles`. A user can hold e.g. researcher + reviewer.
+- **Admin sets the initial password** at create time (no SMTP/invite infra exists); Argon2-hashed
+  like `bootstrap_admin`. No self-service password change yet.
+- Extra scope included: **reset password** (revokes that user's sessions), **re-enable** disabled
+  users, **DB-credential grants** surfaced **read-only** (provisioning stays the out-of-band CLI).
+  A standalone force-logout button was **not** taken — session revocation rides on disable + reset.
+- **Safety guards** enforced server-side: last-admin protection (can't remove the `admin` role from,
+  or disable, the only remaining enabled admin → 409); disable kills live sessions immediately
+  (`resolve_session` already rejects disabled users); role changes take effect on the next request.
 
-**Stories** (branch + PR each; demo-facing first):
+**Stories** (branch + PR each):
 
 | Story | Scope |
 |---|---|
-| M8.1 | Styling foundation + app shell — Tailwind setup, shared primitives, restyle AdminLayout + Login. No behavior change. |
-| M8.2 | Respondent runner polish — SurveyJS theme + entry/completion/invalid/error/loading screens. |
-| M8.3 | Survey list / dashboard — status badges, version history, response counts (needs a count endpoint), create-from-starter. |
-| M8.4 | Review consoles polish — PII queue + GDPR console restyle, clearer pending/decided states. RBAC unchanged. |
-| M8.5 | Authoring editor — CodeMirror 6 (highlight/fold/error gutter); publish-gate/lint `detail` → inline field errors; `patterns/*.json` as in-UI starter templates. |
-| M8.6 | Interactive preview (client-side only — walk branches, complete a test response, **nothing submitted**, invariant 1 preserved) + M8 verification runbook. |
+| M9.1 | Multi-role auth refactor — migration (`app.user_roles` + backfill + drop `users.role`; grant `stele_api`, revoke `stele_etl`); `AuthenticatedUser.roles`, `require_role`, `create_user(roles)`, `UserOut.roles`, `bootstrap_admin`; frontend `User.roles`; update RBAC/auth tests. Self-contained + releasable. |
+| M9.2 | Admin user-management API — `api/admin/users_router.py` (`/admin/users`, admin-gated): list, create (409 on dup), set-roles, disable/enable, reset-password. Last-admin guard; reset revokes sessions. `test_admin_users.py`. |
+| M9.3 | Admin user-management UI — `UsersView` (table, role editor, create form, disable/enable/reset actions behind confirm) + read-only `DbCredentialsView`; `api.ts` clients; `/admin/users` + `/admin/db-credentials` routes; admin-only nav links. Colocated tests. |
+
+> **Design-doc divergence:** §3.10 documents single-role-per-user. Multi-role diverges; a §3.10
+> revision is drafted for review and folded into the E1 sync backlog (docs are read-only by policy).
 
 ---
 
@@ -86,12 +93,12 @@ decomposed into PR-sized stories.
 
 ### E. Process / docs loose ends
 
-- **E1** — Several **design-doc edits drafted in chat but never synced** (docs are read-only by policy): the M3 renumber (§1.3 / §7.3 / §3.10 / §6) and §3.3 wording. Need an explicit apply.
+- **E1** — Several **design-doc edits drafted in chat but never synced** (docs are read-only by policy): the M3 renumber (§1.3 / §7.3 / §3.10 / §6), the §3.3 wording, and the **M9 §3.10 multi-role revision** (single-role → `app.user_roles` join table). Need an explicit apply.
 - **E2** — Open **PR #35** (Railway deploy/operate docs) awaiting merge.
 
 ---
 
-## Likely M9+ sequencing (indicative, not committed)
+## Likely M10+ sequencing (indicative, not committed)
 
 - **Cross-version equivalence (A1)** — highest readiness; the guards already exist.
 - **Multi-submission grain fix (C1)** — foundational debt; gates edit/resubmit features.

@@ -41,7 +41,7 @@ const SCRUB_RESULT = {
 
 function asRole(role: string): void {
   mockedAuth.mockReturnValue({
-    user: { id: 1, email: 'rev@example.com', role, disabled: false, created_at: 't' },
+    user: { id: 1, email: 'rev@example.com', roles: [role], disabled: false, created_at: 't' },
     status: 'ready',
     login: vi.fn(),
     logout: vi.fn(),

@@ -41,7 +41,7 @@ describe('LoginView', () => {
     mockedLogin.mockResolvedValue({
       id: 1,
       email: 'admin@example.com',
-      role: 'admin',
+      roles: ['admin'],
       disabled: false,
       created_at: 't',
     });

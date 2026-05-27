@@ -13,7 +13,7 @@ vi.mock('../api', async (importOriginal) => ({
   fetchCurrentUser: vi.fn().mockResolvedValue({
     id: 1,
     email: 'admin@example.com',
-    role: 'admin',
+    roles: ['admin'],
     disabled: false,
     created_at: 't',
   }),
@@ -32,7 +32,7 @@ function asRole(role: string): void {
   mockedFetchUser.mockResolvedValue({
     id: 1,
     email: `${role}@example.com`,
-    role,
+    roles: [role],
     disabled: false,
     created_at: 't',
   });

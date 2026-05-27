@@ -22,12 +22,30 @@ class User(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     email: Mapped[str] = mapped_column(Text)
     password_hash: Mapped[str] = mapped_column(Text)
-    # One of {admin, researcher, reviewer}; DB CHECK constraint backs this up.
-    role: Mapped[str] = mapped_column(Text)
     disabled: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()")
     )
+
+
+class UserRole(Base):
+    """One granted application role for an operator (design doc §3.10).
+
+    Roles are multi-valued: a user holds zero or more of {admin, researcher,
+    reviewer}, one row each. Loaded explicitly by the auth service rather than via
+    an ORM relationship to keep role resolution a plain, awaited query (async
+    SQLAlchemy makes lazy relationship access on a detached instance a footgun).
+    Created/altered via Alembic (see f1a2b3c4d5e6).
+    """
+
+    __tablename__ = "user_roles"
+    __table_args__ = {"schema": "app"}
+
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("app.users.id", ondelete="CASCADE"), primary_key=True
+    )
+    # One of {admin, researcher, reviewer}; DB CHECK constraint backs this up.
+    role: Mapped[str] = mapped_column(Text, primary_key=True)
 
 
 class Session(Base):

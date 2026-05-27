@@ -52,7 +52,7 @@ export function GdprView() {
     };
   }, []);
 
-  if (user && user.role !== 'admin') {
+  if (user && !user.roles.includes('admin')) {
     return <Alert tone="error">Only admins can access the GDPR console.</Alert>;
   }
 

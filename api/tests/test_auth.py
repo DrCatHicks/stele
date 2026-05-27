@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,10 +23,10 @@ PASSWORD = "correct-horse-battery-staple"
 async def _make_user(
     session: AsyncSession,
     email: str = "admin@example.com",
-    role: str = "admin",
+    roles: list[str] | None = None,
     disabled: bool = False,
 ) -> int:
-    user = await service.create_user(session, email, PASSWORD, role)
+    user = await service.create_user(session, email, PASSWORD, roles or ["admin"])
     if disabled:
         user.disabled = True
         await session.commit()
@@ -44,7 +45,7 @@ async def test_login_success_sets_httponly_cookie(
     assert resp.status_code == 200
     body = resp.json()
     assert body["email"] == "admin@example.com"
-    assert body["role"] == "admin"
+    assert body["roles"] == ["admin"]
     set_cookie = resp.headers["set-cookie"]
     assert "httponly" in set_cookie.lower()
     assert client.cookies.get(config.COOKIE_NAME) is not None
@@ -173,6 +174,30 @@ async def test_tampered_cookie_rejected(client: AsyncClient, db_session: AsyncSe
 
     bad = await client.get("/auth/me", headers=_cookie_header(tampered))
     assert bad.status_code == 401
+
+
+async def test_create_user_rejects_unknown_role(db_session: AsyncSession) -> None:
+    with pytest.raises(service.InvalidRole):
+        await service.create_user(db_session, "x@example.com", PASSWORD, ["admin", "wizard"])
+
+
+async def test_create_user_rejects_empty_roles(db_session: AsyncSession) -> None:
+    with pytest.raises(service.InvalidRole):
+        await service.create_user(db_session, "x@example.com", PASSWORD, [])
+
+
+async def test_create_user_rejects_bare_string_roles(db_session: AsyncSession) -> None:
+    # A str is an Iterable[str] (mypy accepts it), so the runtime guards against
+    # "admin" silently splitting into {'a','d','m','i','n'}.
+    with pytest.raises(TypeError):
+        await service.create_user(db_session, "x@example.com", PASSWORD, "admin")
+
+
+async def test_create_user_dedupes_and_sorts_roles(db_session: AsyncSession) -> None:
+    user = await service.create_user(
+        db_session, "multi@example.com", PASSWORD, ["reviewer", "admin", "reviewer"]
+    )
+    assert await service.get_roles(db_session, user.id) == ["admin", "reviewer"]
 
 
 async def test_expired_session_rejected_and_cleaned(

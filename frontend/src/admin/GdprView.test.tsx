@@ -23,7 +23,7 @@ const mockedAuth = vi.mocked(useAuth);
 
 function asRole(role: string): void {
   mockedAuth.mockReturnValue({
-    user: { id: 1, email: 'op@example.com', role, disabled: false, created_at: 't' },
+    user: { id: 1, email: 'op@example.com', roles: [role], disabled: false, created_at: 't' },
     status: 'ready',
     login: vi.fn(),
     logout: vi.fn(),

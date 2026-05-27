@@ -74,7 +74,7 @@ PANEL_DEFINITION: dict[str, Any] = {
 
 
 async def _login_reviewer(client: AsyncClient, db_session: AsyncSession) -> None:
-    await auth_service.create_user(db_session, "rev@scrub.example.com", PASSWORD, "reviewer")
+    await auth_service.create_user(db_session, "rev@scrub.example.com", PASSWORD, ["reviewer"])
     resp = await client.post(
         "/auth/login", json={"email": "rev@scrub.example.com", "password": PASSWORD}
     )

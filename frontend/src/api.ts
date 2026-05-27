@@ -53,7 +53,7 @@ export interface SubmitResult {
 export interface User {
   id: number;
   email: string;
-  role: string;
+  roles: string[];
   disabled: boolean;
   created_at: string;
 }

@@ -70,7 +70,7 @@ def test_generated_password_is_quote_safe() -> None:
 
 async def _login(client: AsyncClient, session: AsyncSession, role: str) -> None:
     email = f"{role}@example.com"
-    await service.create_user(session, email, PASSWORD, role)
+    await service.create_user(session, email, PASSWORD, [role])
     resp = await client.post("/auth/login", json={"email": email, "password": PASSWORD})
     assert resp.status_code == 200
 

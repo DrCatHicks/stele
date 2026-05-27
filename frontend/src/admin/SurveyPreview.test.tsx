@@ -33,10 +33,20 @@ describe('SurveyPreview', () => {
     await userEvent.click(await screen.findByText('a'));
     await userEvent.click(screen.getByText('Complete'));
 
-    // SurveyJS shows its built-in completion page, and nothing is sent.
+    // Our own "not submitted" summary replaces SurveyJS's completion page, and
+    // nothing is sent over the network.
     await waitFor(() => {
-      expect(screen.getByText(/thank you/i)).toBeInTheDocument();
+      expect(screen.getByText(/not submitted/i)).toBeInTheDocument();
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('surfaces the captured shown-set and payload for self-testing', async () => {
+    render(<SurveyPreview definition={DEFINITION} />);
+    await userEvent.click(await screen.findByText('a'));
+
+    // The captured panel reflects what the runner would submit, without sending it.
+    expect(screen.getByText('q1')).toBeInTheDocument();
+    expect(screen.getByText(/"q1": "a"/)).toBeInTheDocument();
   });
 });

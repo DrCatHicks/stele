@@ -2,20 +2,18 @@ import { useEffect, useMemo, useState } from 'react';
 import { Model } from 'survey-core';
 import { Survey } from 'survey-react-ui';
 
-import { fetchSurvey, submitResponse, type SurveyDetail } from './api';
+import { ApiError, fetchSurvey, submitResponse, type SurveyDetail } from './api';
+import { RespondentLayout } from './RespondentLayout';
+import { Card, CardBody, LoadingState } from './ui';
 
 interface SurveyRunnerProps {
   surveyId: string;
   version: number;
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 export function SurveyRunner({ surveyId, version }: SurveyRunnerProps) {
   const [detail, setDetail] = useState<SurveyDetail | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [submitted, setSubmitted] = useState(false);
 
   useEffect(() => {
@@ -25,14 +23,21 @@ export function SurveyRunner({ surveyId, version }: SurveyRunnerProps) {
         if (active) setDetail(loaded);
       })
       .catch((err: unknown) => {
-        if (active) setError(errorMessage(err));
+        if (active) setError(err);
       });
     return () => {
       active = false;
     };
   }, [surveyId, version]);
 
-  const model = useMemo(() => (detail ? new Model(detail.definition_json) : null), [detail]);
+  const model = useMemo(() => {
+    if (!detail) return null;
+    const m = new Model(detail.definition_json);
+    // We render our own completion screen below, so suppress SurveyJS's built-in
+    // "thank you" page (avoids a flash of its page before ours mounts).
+    m.showCompletedPage = false;
+    return m;
+  }, [detail]);
 
   useEffect(() => {
     if (!model || !detail) return;
@@ -48,7 +53,7 @@ export function SurveyRunner({ surveyId, version }: SurveyRunnerProps) {
         shown_questions: shownQuestions,
       })
         .then(() => setSubmitted(true))
-        .catch((err: unknown) => setError(errorMessage(err)));
+        .catch((err: unknown) => setError(err));
     };
     model.onComplete.add(handleComplete);
     return () => {
@@ -56,8 +61,56 @@ export function SurveyRunner({ surveyId, version }: SurveyRunnerProps) {
     };
   }, [model, detail, surveyId, version]);
 
-  if (error) return <div role="alert">Error: {error}</div>;
-  if (submitted) return <div role="status">Thank you — your response was recorded.</div>;
-  if (!model) return <div role="status">Loading…</div>;
-  return <Survey model={model} />;
+  if (error) {
+    const notFound = error instanceof ApiError && error.status === 404;
+    return (
+      <RespondentLayout>
+        <Card>
+          <CardBody>
+            <h1 className="text-lg font-semibold text-ink" role="alert">
+              {notFound ? 'Survey unavailable' : 'Something went wrong'}
+            </h1>
+            <p className="mt-2 text-sm text-muted">
+              {notFound
+                ? 'This survey could not be found, or it has not been published. Check the link and try again.'
+                : 'We could not load this survey. Please try again in a moment.'}
+            </p>
+          </CardBody>
+        </Card>
+      </RespondentLayout>
+    );
+  }
+
+  if (submitted) {
+    return (
+      <RespondentLayout>
+        <Card>
+          <CardBody className="text-center">
+            <div
+              aria-hidden
+              className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-success-bg text-2xl text-success"
+            >
+              ✓
+            </div>
+            <h1 className="text-lg font-semibold text-ink">Thank you</h1>
+            <p className="mt-2 text-sm text-muted">Your response was recorded.</p>
+          </CardBody>
+        </Card>
+      </RespondentLayout>
+    );
+  }
+
+  if (!model) {
+    return (
+      <RespondentLayout>
+        <LoadingState label="Loading survey…" />
+      </RespondentLayout>
+    );
+  }
+
+  return (
+    <RespondentLayout>
+      <Survey model={model} />
+    </RespondentLayout>
+  );
 }

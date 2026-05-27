@@ -1,11 +1,13 @@
 import { useSearchParams } from 'react-router-dom';
 
+import { RespondentLayout } from './RespondentLayout';
 import { SurveyRunner } from './SurveyRunner';
+import { Card, CardBody } from './ui';
 
 /**
- * Public respondent entry. Reads ?survey=<id>&version=<n> from the URL, exactly
- * as the pre-router app did, and renders the runner. Behavior is unchanged — the
- * router just hosts it at "/".
+ * Public respondent entry. Reads ?survey=<id>&version=<n> from the URL and
+ * renders the runner; with no survey id it shows a friendly prompt instead of a
+ * bare sentence.
  */
 export function RespondentEntry() {
   const [params] = useSearchParams();
@@ -14,7 +16,17 @@ export function RespondentEntry() {
 
   if (!surveyId) {
     return (
-      <p>Provide ?survey=&lt;id&gt;&amp;version=&lt;n&gt; in the URL to load a published survey.</p>
+      <RespondentLayout>
+        <Card>
+          <CardBody>
+            <h1 className="text-lg font-semibold text-ink">No survey selected</h1>
+            <p className="mt-2 text-sm text-muted">
+              Open a survey using the link you were given. A valid link includes a survey
+              identifier, for example <code className="text-ink">?survey=…&version=1</code>.
+            </p>
+          </CardBody>
+        </Card>
+      </RespondentLayout>
     );
   }
   return <SurveyRunner surveyId={surveyId} version={version} />;

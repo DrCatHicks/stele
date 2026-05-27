@@ -69,12 +69,21 @@ describe('SurveyRunner', () => {
     expect(sent.shown_questions).toContain('q1');
   });
 
-  it('shows an error when the survey fails to load', async () => {
+  it('shows a generic error screen when the survey fails to load', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({ ok: false, status: 500 } as unknown as Response),
     );
     render(<SurveyRunner surveyId="s" version={1} />);
-    expect(await screen.findByRole('alert')).toHaveTextContent(/Error/);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong');
+  });
+
+  it('shows an "unavailable" screen for a 404 (not found / unpublished)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: false, status: 404 } as unknown as Response),
+    );
+    render(<SurveyRunner surveyId="s" version={1} />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Survey unavailable');
   });
 });

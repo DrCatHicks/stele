@@ -1,19 +1,40 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { SurveySummary } from '../api';
 import { SurveyListView } from './SurveyListView';
 
 vi.mock('../api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api')>()),
   listSurveys: vi.fn(),
   createSurvey: vi.fn(),
+  setSurveyShortCode: vi.fn(),
+  clearSurveyShortCode: vi.fn(),
 }));
 
-const { listSurveys, createSurvey } = await import('../api');
+const { listSurveys, createSurvey, setSurveyShortCode, clearSurveyShortCode } =
+  await import('../api');
 const mockedList = vi.mocked(listSurveys);
 const mockedCreate = vi.mocked(createSurvey);
+const mockedSetCode = vi.mocked(setSurveyShortCode);
+const mockedClearCode = vi.mocked(clearSurveyShortCode);
+
+// A SurveySummary row with sensible defaults; override per test.
+function row(overrides: Partial<SurveySummary> = {}): SurveySummary {
+  return {
+    survey_id: 'aaa',
+    version: 1,
+    status: 'published',
+    definition_hash: 'h',
+    published_at: '2026-01-01T00:00:00Z',
+    created_at: 't1',
+    response_count: 0,
+    short_code: null,
+    ...overrides,
+  };
+}
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -36,24 +57,14 @@ function renderList() {
 describe('SurveyListView', () => {
   it('lists every survey/version with status badges and response counts', async () => {
     mockedList.mockResolvedValue([
-      {
-        survey_id: 'aaa',
+      row({
         version: 2,
         status: 'draft',
         definition_hash: null,
         published_at: null,
         created_at: 't2',
-        response_count: 0,
-      },
-      {
-        survey_id: 'aaa',
-        version: 1,
-        status: 'published',
-        definition_hash: 'h',
-        published_at: '2026-01-01T00:00:00Z',
-        created_at: 't1',
-        response_count: 5,
-      },
+      }),
+      row({ version: 1, status: 'published', response_count: 5 }),
     ]);
     renderList();
 
@@ -96,5 +107,89 @@ describe('SurveyListView', () => {
 
     expect(mockedCreate).toHaveBeenCalledOnce();
     expect(await screen.findByText('Editor opened')).toBeInTheDocument();
+  });
+});
+
+describe('SurveyListView short codes', () => {
+  const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
+
+  beforeEach(() => {
+    writeText.mockClear();
+    Object.assign(navigator, { clipboard: { writeText } });
+  });
+
+  it('copies the short-code link when a code is set', async () => {
+    mockedList.mockResolvedValue([row({ short_code: 'climate-2026' })]);
+    renderList();
+
+    const copy = await screen.findByRole('button', { name: 'Copy link' });
+    // The link points at the /s/<code> path on the current origin.
+    expect(copy).toHaveAttribute('title', `${window.location.origin}/s/climate-2026`);
+    await userEvent.click(copy);
+    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/s/climate-2026`);
+    expect(await screen.findByRole('button', { name: 'Copied!' })).toBeInTheDocument();
+  });
+
+  it('falls back to the survey/version link when no code is set', async () => {
+    mockedList.mockResolvedValue([row({ survey_id: 'sid', version: 3, short_code: null })]);
+    renderList();
+
+    const copy = await screen.findByRole('button', { name: 'Copy link' });
+    await userEvent.click(copy);
+    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/?survey=sid&version=3`);
+  });
+
+  it('disables copy when nothing is published', async () => {
+    mockedList.mockResolvedValue([
+      row({ status: 'draft', definition_hash: null, published_at: null }),
+    ]);
+    renderList();
+
+    const copy = await screen.findByRole('button', { name: 'Copy link' });
+    expect(copy).toBeDisabled();
+  });
+
+  it('sets a short code and shows it without a reload', async () => {
+    mockedList.mockResolvedValue([row({ short_code: null })]);
+    mockedSetCode.mockResolvedValue({ survey_id: 'aaa', short_code: 'my-code' });
+    renderList();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Add short code' }));
+    await userEvent.type(screen.getByLabelText('Short code'), 'my-code');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(mockedSetCode).toHaveBeenCalledWith('aaa', 'my-code');
+    // The saved code is shown and the copy link now targets it.
+    await screen.findByText('my-code');
+    expect(screen.getByRole('button', { name: 'Copy link' })).toHaveAttribute(
+      'title',
+      `${window.location.origin}/s/my-code`,
+    );
+  });
+
+  it('surfaces a taken-code error and keeps the input open', async () => {
+    mockedList.mockResolvedValue([row({ short_code: null })]);
+    mockedSetCode.mockRejectedValue(new Error('that short code is already in use'));
+    renderList();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Add short code' }));
+    await userEvent.type(screen.getByLabelText('Short code'), 'taken');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('already in use');
+    // Still editing, so the operator can correct it.
+    expect(screen.getByLabelText('Short code')).toBeInTheDocument();
+  });
+
+  it('removes a short code', async () => {
+    mockedList.mockResolvedValue([row({ short_code: 'to-remove' })]);
+    mockedClearCode.mockResolvedValue(undefined);
+    renderList();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Remove' }));
+
+    expect(mockedClearCode).toHaveBeenCalledWith('aaa');
+    await waitFor(() => expect(screen.getByText('none')).toBeInTheDocument());
   });
 });

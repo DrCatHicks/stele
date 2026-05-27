@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -18,6 +19,7 @@ from typing import Any, Literal, cast
 
 from sqlalchemy import CursorResult, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.survey_engine import round_trip
@@ -28,6 +30,7 @@ from api.survey_engine.models import (
     Response,
     ResponseItem,
     SurveyDefinition,
+    SurveyShortCode,
     Withdrawal,
 )
 from api.survey_engine.round_trip import RoundTripUnavailable
@@ -65,6 +68,14 @@ class SubmissionRejected(Exception):
 
 class FreeTextResponseNotFound(Exception):
     """No high-risk free-text answer with the given id (reviewer screening)."""
+
+
+class InvalidShortCode(Exception):
+    """The proposed short code doesn't satisfy the link-safe format."""
+
+
+class ShortCodeTaken(Exception):
+    """Another survey already owns the requested short code."""
 
 
 def canonical_hash(definition: dict[str, Any]) -> str:
@@ -264,6 +275,131 @@ async def list_definitions_with_counts(
         .order_by(SurveyDefinition.created_at.desc(), SurveyDefinition.version.desc())
     )
     return [(definition, int(count)) for definition, count in result.all()]
+
+
+# Link-safe short codes: lowercase letters/digits/hyphens, no leading/trailing
+# hyphen, 3-64 chars. Keeps the /s/<code> path clean and unambiguous (URLs are
+# case-sensitive in the path, so we normalise to lowercase before validating).
+_SHORT_CODE_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
+_SHORT_CODE_MIN = 3
+_SHORT_CODE_MAX = 64
+
+
+def normalize_short_code(raw: str) -> str:
+    """Trim + lowercase a proposed code and validate its format.
+
+    Raises InvalidShortCode with a human-readable reason (surfaced to the operator
+    as a 422 detail). Returns the canonical form to store.
+    """
+    code = raw.strip().lower()
+    if not (_SHORT_CODE_MIN <= len(code) <= _SHORT_CODE_MAX):
+        raise InvalidShortCode(f"short code must be {_SHORT_CODE_MIN}-{_SHORT_CODE_MAX} characters")
+    if not _SHORT_CODE_RE.fullmatch(code):
+        raise InvalidShortCode(
+            "short code may contain only lowercase letters, digits, and hyphens, "
+            "and may not start or end with a hyphen"
+        )
+    return code
+
+
+async def _survey_exists(session: AsyncSession, survey_id: uuid.UUID) -> bool:
+    return (
+        await session.execute(
+            select(SurveyDefinition.id).where(SurveyDefinition.survey_id == survey_id).limit(1)
+        )
+    ).first() is not None
+
+
+async def set_short_code(
+    session: AsyncSession, survey_id: uuid.UUID, raw_code: str
+) -> SurveyShortCode:
+    """Assign (or reassign) a survey's short code.
+
+    Idempotent per survey: a survey already holding a code has it replaced. Raises
+    SurveyNotFound for an unknown survey, InvalidShortCode for a bad format, and
+    ShortCodeTaken if a *different* survey already owns the code (the unique
+    constraint is the real guard against a concurrent claim; the pre-check just
+    yields a clean error on the common path).
+    """
+    if not await _survey_exists(session, survey_id):
+        raise SurveyNotFound(str(survey_id))
+    code = normalize_short_code(raw_code)
+
+    owner = (
+        await session.execute(
+            select(SurveyShortCode.survey_id).where(SurveyShortCode.short_code == code)
+        )
+    ).scalar_one_or_none()
+    if owner is not None and owner != survey_id:
+        raise ShortCodeTaken(code)
+
+    now = datetime.now(UTC)
+    stmt = pg_insert(SurveyShortCode).values(
+        survey_id=survey_id, short_code=code, created_at=now, updated_at=now
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[SurveyShortCode.survey_id],
+        set_={"short_code": code, "updated_at": now},
+    )
+    try:
+        await session.execute(stmt)
+        await session.commit()
+    except IntegrityError as exc:
+        # Lost the race on the short_code unique constraint to a concurrent claim.
+        await session.rollback()
+        raise ShortCodeTaken(code) from exc
+
+    row = (
+        await session.execute(select(SurveyShortCode).where(SurveyShortCode.survey_id == survey_id))
+    ).scalar_one()
+    return row
+
+
+async def clear_short_code(session: AsyncSession, survey_id: uuid.UUID) -> bool:
+    """Remove a survey's short code (frees it for reuse). Returns True if a code
+    was removed, False if the survey had none — both are success for the caller."""
+    result = cast(
+        CursorResult[Any],
+        await session.execute(
+            delete(SurveyShortCode).where(SurveyShortCode.survey_id == survey_id)
+        ),
+    )
+    await session.commit()
+    return (result.rowcount or 0) > 0
+
+
+async def get_short_codes_map(session: AsyncSession) -> dict[uuid.UUID, str]:
+    """survey_id → short_code for every survey that has one (backs the admin list)."""
+    rows = (
+        await session.execute(select(SurveyShortCode.survey_id, SurveyShortCode.short_code))
+    ).all()
+    return {survey_id: code for survey_id, code in rows}
+
+
+async def resolve_short_code(session: AsyncSession, raw_code: str) -> tuple[uuid.UUID, int] | None:
+    """Resolve a short code to (survey_id, latest published version) for the
+    public link. Returns None when the code is unknown *or* the survey has no
+    published version yet — the respondent endpoint treats both as 404, so a
+    public caller can't probe which codes exist."""
+    code = raw_code.strip().lower()
+    survey_id = (
+        await session.execute(
+            select(SurveyShortCode.survey_id).where(SurveyShortCode.short_code == code)
+        )
+    ).scalar_one_or_none()
+    if survey_id is None:
+        return None
+    version = (
+        await session.execute(
+            select(func.max(SurveyDefinition.version)).where(
+                SurveyDefinition.survey_id == survey_id,
+                SurveyDefinition.status == "published",
+            )
+        )
+    ).scalar_one_or_none()
+    if version is None:
+        return None
+    return (survey_id, version)
 
 
 async def submit_response(

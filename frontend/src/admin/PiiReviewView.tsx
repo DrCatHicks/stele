@@ -8,6 +8,7 @@ import {
   type ReviewStatus,
 } from '../api';
 import { useAuth } from '../auth/AuthContext';
+import { formatDate } from '../format';
 import {
   Alert,
   Badge,
@@ -132,9 +133,7 @@ export function PiiReviewView() {
                   <td className="px-5 py-3 font-mono text-xs text-muted">{item.respondent_id}</td>
                   <td className="px-5 py-3 text-ink">{item.question_name}</td>
                   <td className="px-5 py-3 text-ink">{item.value_text ?? '—'}</td>
-                  <td className="px-5 py-3 text-muted">
-                    {new Date(item.created_at).toLocaleDateString()}
-                  </td>
+                  <td className="px-5 py-3 text-muted">{formatDate(item.created_at)}</td>
                   <td className="px-5 py-3">
                     {status === 'pending' ? (
                       <div className="flex gap-2">

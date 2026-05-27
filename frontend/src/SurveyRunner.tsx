@@ -18,6 +18,11 @@ export function SurveyRunner({ surveyId, version }: SurveyRunnerProps) {
 
   useEffect(() => {
     let active = true;
+    // Reset to the loading state so a survey/version change can't leave the prior
+    // survey, its completion screen, or a stale error showing while the new one loads.
+    setDetail(null);
+    setError(null);
+    setSubmitted(false);
     fetchSurvey(surveyId, version)
       .then((loaded) => {
         if (active) setDetail(loaded);

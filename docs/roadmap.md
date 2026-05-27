@@ -77,11 +77,11 @@ decomposed into PR-sized stories.
 
 - **D1** — Encrypted **remote tofu state** (local gitignored backend today; stub is commented).
 - **D2** — **EU data residency** for real PII (`region` var exists; "the one thing to revisit before real PII").
-- **D3** — **Separate migrate service** — admin creds currently ride the web env (web-RCE → DB-owner escalation); narrow at RDS/Cloud SQL or real PII.
+- **D3** — **Separate migrate service** — admin creds currently ride the web env (web-RCE → DB-owner escalation); also the D7 migrate-on-start races at `num_replicas > 1` (alembic isn't concurrent). Narrow at RDS/Cloud SQL, real PII, or the first scale-out.
 - **D4** — **AWS / GCP Cloud SQL** OpenTofu modules (additive behind the shared `variables.tf`).
 - **D5** — Railway **volume backups + restore drill**.
 - **D6** — **Retention-vs-erasure** policy (tie to the M2.2 tombstone).
-- **D7** — Shared **prebuilt image in registry** (eliminate the cron build-twice).
+- ~~**D7** — Shared **prebuilt image in registry** (eliminate the cron build-twice).~~ **Done** — CI builds/tests/pushes one GHCR image; `web` + `etl` both pull it (migrate-on-start + `STELE_ENTRYPOINT=etl` replace the deleted `railway.json` config). See `docs/verification/d7-prebuilt-image.md`. Leftover: web healthcheck + etl restart-policy are now Railway dashboard settings.
 - **D8** — Operator-supplied secrets **never born in state** (override vars exist; flip the posture for real prod).
 
 ### E. Process / docs loose ends

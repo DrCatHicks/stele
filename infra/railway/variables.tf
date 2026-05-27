@@ -25,14 +25,14 @@ variable "region" {
   default     = "us-east4"
 }
 
-variable "source_repo" {
-  description = "GitHub repo (owner/name) Railway builds the web service from. The repo must have the Railway GitHub app installed."
+variable "image" {
+  description = "Container image (without tag) both the web and ETL services run. Built and pushed once by CI (D7); the services pull it instead of each rebuilding the Dockerfile from source. GHCR namespace defaults to this repo."
   type        = string
-  default     = "countercheck/stele"
+  default     = "ghcr.io/countercheck/stele"
 }
 
-variable "source_repo_branch" {
-  description = "Branch Railway deploys."
+variable "image_tag" {
+  description = "Tag of var.image to deploy. CI pushes a floating `main` tag plus an immutable `<commit-sha>` tag on every push to main. Default `main` tracks the branch; pin to a sha (tofu apply -var image_tag=<sha>) for a reproducible rollout — changing this string is what triggers Railway to redeploy the new image."
   type        = string
   default     = "main"
 }
@@ -55,6 +55,24 @@ variable "postgres_image" {
   description = "Docker image for the managed Postgres service. Railway's SSL-enabled Postgres 16 image."
   type        = string
   default     = "ghcr.io/railwayapp-templates/postgres-ssl:16"
+}
+
+# The app image is published to a PUBLIC GHCR package, so Railway pulls it without
+# credentials and these stay empty (the repo is public — the image exposes nothing
+# the source doesn't). To make it private later: flip the GHCR package visibility,
+# then set these two (username = a GitHub user/org, password = a read:packages PAT)
+# and re-apply. No module change — just config. Empty = anonymous pull.
+variable "image_registry_username" {
+  description = "Registry username for pulling a PRIVATE app image (GitHub username/org). Empty = anonymous pull (public package)."
+  type        = string
+  default     = ""
+}
+
+variable "image_registry_password" {
+  description = "Registry password/token for pulling a PRIVATE app image (a read:packages PAT). Empty = anonymous pull (public package)."
+  type        = string
+  default     = ""
+  sensitive   = true
 }
 
 variable "web_subdomain" {

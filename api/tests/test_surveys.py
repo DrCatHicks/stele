@@ -135,6 +135,29 @@ async def test_list_surveys_returns_all_versions_newest_first(authed_client: Asy
     assert {r["survey_id"] for r in rows[:2]} == {survey_id}
 
 
+async def test_list_surveys_reports_live_response_counts(authed_client: AsyncClient) -> None:
+    """The dashboard count reflects live (non-tombstoned) responses per version."""
+    draft = await _create_draft(authed_client)
+    survey_id = draft["survey_id"]
+    published = (await authed_client.post(f"/surveys/{survey_id}/versions/1/publish")).json()
+    definition_hash = published["definition_hash"]
+
+    for _ in range(2):
+        submit = await authed_client.post(
+            f"/surveys/{survey_id}/versions/1/responses",
+            json={
+                "definition_hash": definition_hash,
+                "payload": {"q1": "a"},
+                "shown_questions": ["q1"],
+            },
+        )
+        assert submit.status_code == 201
+
+    rows = (await authed_client.get("/surveys")).json()
+    mine = next(r for r in rows if r["survey_id"] == survey_id and r["version"] == 1)
+    assert mine["response_count"] == 2
+
+
 def _free_text_definition(element_extra: dict[str, Any]) -> dict[str, Any]:
     return {
         "pages": [{"name": "p1", "elements": [{"type": "comment", "name": "ft1", **element_extra}]}]

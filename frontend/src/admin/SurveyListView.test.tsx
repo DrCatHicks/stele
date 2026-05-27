@@ -34,7 +34,7 @@ function renderList() {
 }
 
 describe('SurveyListView', () => {
-  it('lists every survey/version row', async () => {
+  it('lists every survey/version with status badges and response counts', async () => {
     mockedList.mockResolvedValue([
       {
         survey_id: 'aaa',
@@ -43,6 +43,7 @@ describe('SurveyListView', () => {
         definition_hash: null,
         published_at: null,
         created_at: 't2',
+        response_count: 0,
       },
       {
         survey_id: 'aaa',
@@ -51,13 +52,17 @@ describe('SurveyListView', () => {
         definition_hash: 'h',
         published_at: '2026-01-01T00:00:00Z',
         created_at: 't1',
+        response_count: 5,
       },
     ]);
     renderList();
 
     expect(await screen.findByText('draft')).toBeInTheDocument();
     expect(screen.getByText('published')).toBeInTheDocument();
-    expect(screen.getAllByRole('link', { name: 'aaa' })).toHaveLength(2);
+    // Both versions of the one survey are grouped, each with an Open link.
+    expect(screen.getAllByRole('link', { name: /Open aaa/ })).toHaveLength(2);
+    // The version summary line reports the survey's total live responses.
+    expect(screen.getByText(/5 responses/)).toBeInTheDocument();
   });
 
   it('shows an empty state when there are no surveys', async () => {

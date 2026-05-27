@@ -2,6 +2,16 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import { createSurvey, listSurveys, type SurveySummary } from '../api';
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  LoadingState,
+  PageHeader,
+  statusTone,
+} from '../ui';
 
 // A minimal valid starter so a freshly-created draft renders in the editor and
 // preview; the author replaces it. One empty page keeps publish-validation honest
@@ -10,6 +20,70 @@ const STARTER_DEFINITION = { pages: [{ name: 'page1', elements: [] }] };
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+// Group versions under their survey, preserving the server's newest-first order
+// (both across surveys and across versions within a survey).
+function groupBySurvey(rows: SurveySummary[]): SurveySummary[][] {
+  const groups = new Map<string, SurveySummary[]>();
+  for (const row of rows) {
+    const existing = groups.get(row.survey_id);
+    if (existing) existing.push(row);
+    else groups.set(row.survey_id, [row]);
+  }
+  return [...groups.values()];
+}
+
+function SurveyCard({ versions }: { versions: SurveySummary[] }) {
+  const survey = versions[0];
+  if (!survey) return null;
+  const totalResponses = versions.reduce((sum, v) => sum + v.response_count, 0);
+
+  return (
+    <Card>
+      <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
+        <code className="truncate text-sm font-semibold text-ink">{survey.survey_id}</code>
+        <span className="shrink-0 text-xs text-muted">
+          {versions.length} version{versions.length === 1 ? '' : 's'} · {totalResponses} response
+          {totalResponses === 1 ? '' : 's'}
+        </span>
+      </div>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-xs uppercase tracking-wide text-faint">
+            <th className="px-5 py-2 font-medium">Version</th>
+            <th className="px-5 py-2 font-medium">Status</th>
+            <th className="px-5 py-2 font-medium">Responses</th>
+            <th className="px-5 py-2 font-medium">Published</th>
+            <th className="px-5 py-2" />
+          </tr>
+        </thead>
+        <tbody>
+          {versions.map((v) => (
+            <tr key={v.version} className="border-t border-border">
+              <td className="px-5 py-2 font-medium text-ink">v{v.version}</td>
+              <td className="px-5 py-2">
+                <Badge tone={statusTone(v.status)}>{v.status}</Badge>
+              </td>
+              <td className="px-5 py-2 text-muted">{v.response_count}</td>
+              <td className="px-5 py-2 text-muted">
+                {v.published_at ? new Date(v.published_at).toLocaleDateString() : '—'}
+              </td>
+              <td className="px-5 py-2 text-right">
+                <Link
+                  to={`/admin/surveys/${v.survey_id}/versions/${v.version}`}
+                  aria-label={`Open ${v.survey_id} v${v.version}`}
+                  className="font-medium text-brand-dark hover:underline"
+                >
+                  Open
+                </Link>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Card>
+  );
 }
 
 export function SurveyListView() {
@@ -45,44 +119,30 @@ export function SurveyListView() {
       });
   };
 
-  if (error) return <div role="alert">Error: {error}</div>;
-  if (surveys === null) return <div role="status">Loading…</div>;
+  const newButton = (
+    <Button type="button" onClick={handleCreate} disabled={creating}>
+      {creating ? 'Creating…' : 'New survey'}
+    </Button>
+  );
 
   return (
     <section>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h1>Surveys</h1>
-        <button type="button" onClick={handleCreate} disabled={creating}>
-          {creating ? 'Creating…' : 'New survey'}
-        </button>
-      </div>
-      {surveys.length === 0 ? (
-        <p>No surveys yet.</p>
+      <PageHeader
+        title="Surveys"
+        subtitle="Draft, publish, and track responses across versions."
+        actions={newButton}
+      />
+      {error ? <Alert tone="error">Error: {error}</Alert> : null}
+      {surveys === null ? (
+        <LoadingState />
+      ) : surveys.length === 0 ? (
+        <EmptyState>No surveys yet.</EmptyState>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Survey</th>
-              <th>Version</th>
-              <th>Status</th>
-              <th>Published</th>
-            </tr>
-          </thead>
-          <tbody>
-            {surveys.map((s) => (
-              <tr key={`${s.survey_id}:${s.version}`}>
-                <td>
-                  <Link to={`/admin/surveys/${s.survey_id}/versions/${s.version}`}>
-                    {s.survey_id}
-                  </Link>
-                </td>
-                <td>{s.version}</td>
-                <td>{s.status}</td>
-                <td>{s.published_at ? new Date(s.published_at).toLocaleString() : '—'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="flex flex-col gap-4">
+          {groupBySurvey(surveys).map((versions) => (
+            <SurveyCard key={versions[0]?.survey_id} versions={versions} />
+          ))}
+        </div>
       )}
     </section>
   );

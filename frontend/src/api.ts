@@ -12,14 +12,21 @@ export interface SurveyDetail {
   definition_json: Record<string, unknown>;
 }
 
-// Metadata-only row from the admin list endpoint — no definition_json.
-export interface SurveySummary {
+// Survey/version metadata without definition_json — the shape create/edit/publish
+// return.
+export interface SurveyMeta {
   survey_id: string;
   version: number;
   status: string;
   definition_hash: string | null;
   published_at: string | null;
   created_at: string;
+}
+
+// A row from the admin list endpoint: metadata plus its live response count.
+export interface SurveySummary extends SurveyMeta {
+  // Live (non-tombstoned) response count for this version.
+  response_count: number;
 }
 
 export interface SubmitBody {
@@ -134,28 +141,23 @@ export async function listSurveys(): Promise<SurveySummary[]> {
   return request<SurveySummary[]>('/surveys');
 }
 
-export async function createSurvey(
-  definitionJson: Record<string, unknown>,
-): Promise<SurveySummary> {
-  return request<SurveySummary>('/surveys', jsonInit('POST', { definition_json: definitionJson }));
+export async function createSurvey(definitionJson: Record<string, unknown>): Promise<SurveyMeta> {
+  return request<SurveyMeta>('/surveys', jsonInit('POST', { definition_json: definitionJson }));
 }
 
 export async function editSurvey(
   surveyId: string,
   version: number,
   definitionJson: Record<string, unknown>,
-): Promise<SurveySummary> {
-  return request<SurveySummary>(
+): Promise<SurveyMeta> {
+  return request<SurveyMeta>(
     `/surveys/${surveyId}/versions/${version}`,
     jsonInit('PUT', { definition_json: definitionJson }),
   );
 }
 
-export async function publishSurvey(surveyId: string, version: number): Promise<SurveySummary> {
-  return request<SurveySummary>(
-    `/surveys/${surveyId}/versions/${version}/publish`,
-    jsonInit('POST'),
-  );
+export async function publishSurvey(surveyId: string, version: number): Promise<SurveyMeta> {
+  return request<SurveyMeta>(`/surveys/${surveyId}/versions/${version}/publish`, jsonInit('POST'));
 }
 
 // --- GDPR / erasure (admin) ------------------------------------------------

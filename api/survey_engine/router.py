@@ -15,6 +15,7 @@ from api.survey_engine.schemas import (
     SurveyDefinitionDetail,
     SurveyDefinitionOut,
     SurveyDraftCreate,
+    SurveyListItem,
 )
 
 router = APIRouter(prefix="/surveys", tags=["surveys"])
@@ -24,10 +25,13 @@ router = APIRouter(prefix="/surveys", tags=["surveys"])
 _author_only = Depends(require_role("researcher", "admin"))
 
 
-@router.get("", response_model=list[SurveyDefinitionOut], dependencies=[_author_only])
-async def list_surveys(session: SessionDep) -> list[SurveyDefinitionOut]:
-    surveys = await service.list_definitions(session)
-    return [SurveyDefinitionOut.model_validate(s) for s in surveys]
+@router.get("", response_model=list[SurveyListItem], dependencies=[_author_only])
+async def list_surveys(session: SessionDep) -> list[SurveyListItem]:
+    rows = await service.list_definitions_with_counts(session)
+    return [
+        SurveyListItem(**SurveyDefinitionOut.model_validate(s).model_dump(), response_count=n)
+        for s, n in rows
+    ]
 
 
 @router.post("", status_code=201, response_model=SurveyDefinitionOut, dependencies=[_author_only])

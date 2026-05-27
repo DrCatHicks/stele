@@ -34,6 +34,11 @@ class SurveyDefinitionDetail(SurveyDefinitionOut):
     definition_json: dict[str, Any]
 
 
+class SurveyListItem(SurveyDefinitionOut):
+    # Live (non-tombstoned) response count for this version; backs the dashboard.
+    response_count: int
+
+
 class ResponseSubmit(BaseModel):
     # The hash the respondent rendered against; used to reject submissions to a
     # definition that has since drifted (design doc §6 risk table).

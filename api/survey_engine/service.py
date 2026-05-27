@@ -232,6 +232,38 @@ async def list_definitions(session: AsyncSession) -> list[SurveyDefinition]:
     return list(result.scalars().all())
 
 
+async def list_definitions_with_counts(
+    session: AsyncSession,
+) -> list[tuple[SurveyDefinition, int]]:
+    """Every survey/version row (newest first), each with its live response count.
+
+    Counts come from app.raw_responses (the source of truth), not the read-model,
+    and exclude withdrawn responses: the tombstone workflow nulls `payload`, so
+    `payload IS NOT NULL` is the live-response filter (matches how dbt drops
+    withdrawn rows). A version with no responses yields 0 via the outer join.
+    """
+    counts = (
+        select(
+            RawResponse.survey_id.label("survey_id"),
+            RawResponse.survey_version.label("survey_version"),
+            func.count().label("n"),
+        )
+        .where(RawResponse.payload.isnot(None))
+        .group_by(RawResponse.survey_id, RawResponse.survey_version)
+        .subquery()
+    )
+    result = await session.execute(
+        select(SurveyDefinition, func.coalesce(counts.c.n, 0))
+        .outerjoin(
+            counts,
+            (counts.c.survey_id == SurveyDefinition.survey_id)
+            & (counts.c.survey_version == SurveyDefinition.version),
+        )
+        .order_by(SurveyDefinition.created_at.desc(), SurveyDefinition.version.desc())
+    )
+    return [(definition, int(count)) for definition, count in result.all()]
+
+
 async def submit_response(
     session: AsyncSession,
     survey_id: uuid.UUID,

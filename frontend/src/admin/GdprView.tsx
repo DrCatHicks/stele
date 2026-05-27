@@ -7,6 +7,7 @@ import {
   type WithdrawalResult,
 } from '../api';
 import { useAuth } from '../auth/AuthContext';
+import { formatDateTime } from '../format';
 import { Alert, Button, Card, CardBody, EmptyState, Field, LoadingState, PageHeader } from '../ui';
 
 function errorMessage(error: unknown): string {
@@ -149,9 +150,7 @@ export function GdprView() {
               {audit.map((w) => (
                 <tr key={w.id} className="border-t border-border">
                   <td className="px-5 py-2 font-mono text-xs text-muted">{w.respondent_id}</td>
-                  <td className="px-5 py-2 text-muted">
-                    {new Date(w.requested_at).toLocaleDateString()}
-                  </td>
+                  <td className="px-5 py-2 text-muted">{formatDateTime(w.requested_at)}</td>
                   <td className="px-5 py-2 text-ink">{w.reason ?? '—'}</td>
                 </tr>
               ))}

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import { createSurvey, listSurveys, type SurveySummary } from '../api';
+import { formatDate } from '../format';
 import {
   Alert,
   Badge,
@@ -67,7 +68,7 @@ function SurveyCard({ versions }: { versions: SurveySummary[] }) {
               </td>
               <td className="px-5 py-2 text-muted">{v.response_count}</td>
               <td className="px-5 py-2 text-muted">
-                {v.published_at ? new Date(v.published_at).toLocaleDateString() : '—'}
+                {v.published_at ? formatDate(v.published_at) : '—'}
               </td>
               <td className="px-5 py-2 text-right">
                 <Link

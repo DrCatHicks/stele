@@ -8,6 +8,16 @@ import {
   type ReviewStatus,
 } from '../api';
 import { useAuth } from '../auth/AuthContext';
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  LoadingState,
+  PageHeader,
+  statusTone,
+} from '../ui';
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -53,7 +63,7 @@ export function PiiReviewView() {
   }, [status]);
 
   if (user && user.role !== 'reviewer') {
-    return <div role="alert">Only reviewers can screen free-text PII.</div>;
+    return <Alert tone="error">Only reviewers can screen free-text PII.</Alert>;
   }
 
   const decide = (id: number, action: 'promote' | 'reject'): void => {
@@ -66,15 +76,20 @@ export function PiiReviewView() {
       .finally(() => setBusyId(null));
   };
 
+  const tabClass = (tab: ReviewStatus): string =>
+    [
+      'rounded-full px-3 py-1 text-sm font-medium capitalize transition-colors',
+      status === tab ? 'bg-brand text-white' : 'bg-canvas text-muted hover:text-ink',
+    ].join(' ');
+
   return (
     <section>
-      <h1>Free-text PII review</h1>
-      <p>
-        Promoted answers reach the analyst marts on the next ETL build. The default is redacted —
-        promote only answers screened free of PII and proprietary content.
-      </p>
+      <PageHeader
+        title="Free-text PII review"
+        subtitle="Promoted answers reach the analyst marts on the next ETL build. The default is redacted — promote only answers screened free of PII and proprietary content."
+      />
 
-      <div role="tablist" style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+      <div role="tablist" className="mb-4 flex gap-2">
         {TABS.map((tab) => (
           <button
             key={tab}
@@ -82,59 +97,72 @@ export function PiiReviewView() {
             role="tab"
             aria-selected={status === tab}
             onClick={() => setStatus(tab)}
-            disabled={status === tab}
+            className={tabClass(tab)}
           >
             {tab}
           </button>
         ))}
       </div>
 
-      {error ? <div role="alert">Error: {error}</div> : null}
+      {error ? <Alert tone="error">Error: {error}</Alert> : null}
 
       {items === null ? (
-        <div role="status">Loading…</div>
+        <LoadingState />
       ) : items.length === 0 ? (
-        <p>No {status} answers.</p>
+        <EmptyState>No {status} answers.</EmptyState>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Respondent</th>
-              <th>Question</th>
-              <th>Answer</th>
-              <th>Submitted</th>
-              {status === 'pending' ? <th>Decision</th> : null}
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item) => (
-              <tr key={item.id}>
-                <td>{item.respondent_id}</td>
-                <td>{item.question_name}</td>
-                <td>{item.value_text ?? '—'}</td>
-                <td>{new Date(item.created_at).toLocaleString()}</td>
-                {status === 'pending' ? (
-                  <td>
-                    <button
-                      type="button"
-                      onClick={() => decide(item.id, 'promote')}
-                      disabled={busyId === item.id}
-                    >
-                      Promote
-                    </button>{' '}
-                    <button
-                      type="button"
-                      onClick={() => decide(item.id, 'reject')}
-                      disabled={busyId === item.id}
-                    >
-                      Reject
-                    </button>
-                  </td>
-                ) : null}
+        <Card>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs uppercase tracking-wide text-faint">
+                <th className="px-5 py-2 font-medium">Respondent</th>
+                <th className="px-5 py-2 font-medium">Question</th>
+                <th className="px-5 py-2 font-medium">Answer</th>
+                <th className="px-5 py-2 font-medium">Submitted</th>
+                <th className="px-5 py-2 font-medium">
+                  {status === 'pending' ? 'Decision' : 'Status'}
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <tr key={item.id} className="border-t border-border align-top">
+                  <td className="px-5 py-3 font-mono text-xs text-muted">{item.respondent_id}</td>
+                  <td className="px-5 py-3 text-ink">{item.question_name}</td>
+                  <td className="px-5 py-3 text-ink">{item.value_text ?? '—'}</td>
+                  <td className="px-5 py-3 text-muted">
+                    {new Date(item.created_at).toLocaleDateString()}
+                  </td>
+                  <td className="px-5 py-3">
+                    {status === 'pending' ? (
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => decide(item.id, 'promote')}
+                          disabled={busyId === item.id}
+                        >
+                          Promote
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="danger"
+                          onClick={() => decide(item.id, 'reject')}
+                          disabled={busyId === item.id}
+                        >
+                          Reject
+                        </Button>
+                      </div>
+                    ) : (
+                      <Badge tone={statusTone(status)}>{status}</Badge>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
       )}
     </section>
   );

@@ -88,6 +88,17 @@ describe('EtlView', () => {
     expect(screen.getByText('10 → —')).toBeInTheDocument();
   });
 
+  it('shows an unknown source total when a source could not be read', async () => {
+    // The backend records null for an unreadable source; summing it as 0 would
+    // understate the total, so the whole total reads "—".
+    mockedList.mockResolvedValue([
+      run({ source_row_counts: { 'app.raw_responses': 10, 'pii.free_text': null } }),
+    ]);
+    renderView();
+
+    expect(await screen.findByText('— → 5')).toBeInTheDocument();
+  });
+
   it('confirms before triggering a rebuild and then shows the run in progress', async () => {
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     mockedTrigger.mockResolvedValue(run({ run_id: 'r2', status: 'running', completed_at: null }));

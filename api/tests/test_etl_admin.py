@@ -59,6 +59,17 @@ def test_failures_from_handles_missing_summary() -> None:
     assert admin_service.failures_from({"results": []}) == []
 
 
+def test_stale_seconds_rejects_negative_and_garbage(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 0 is valid ("treat any running row as stale"); negative would invert the
+    # guard, and non-int is a misconfiguration — both fall back to the default.
+    monkeypatch.setenv("STELE_ETL_RUN_STALE_SECONDS", "0")
+    assert admin_service._stale_seconds() == 0
+    monkeypatch.setenv("STELE_ETL_RUN_STALE_SECONDS", "-5")
+    assert admin_service._stale_seconds() == admin_service._DEFAULT_STALE_SECONDS
+    monkeypatch.setenv("STELE_ETL_RUN_STALE_SECONDS", "nonsense")
+    assert admin_service._stale_seconds() == admin_service._DEFAULT_STALE_SECONDS
+
+
 def test_is_interrupted_flags_only_stale_running_rows(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("STELE_ETL_RUN_STALE_SECONDS", "1800")
     now = datetime.now(UTC)

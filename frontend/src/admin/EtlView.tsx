@@ -20,10 +20,14 @@ function errorMessage(error: unknown): string {
 }
 
 /** Total across a per-table row-count map; null when the run didn't record it
- * (e.g. marts on a failed run). */
+ * (e.g. marts on a failed run) or when any member is null — the backend uses null
+ * for a source it couldn't read, and summing that as 0 would understate the total,
+ * so we show "unknown" rather than a misleading number. */
 function total(counts: Record<string, number | null> | null): number | null {
   if (!counts) return null;
-  return Object.values(counts).reduce<number>((sum, n) => sum + (n ?? 0), 0);
+  const values = Object.values(counts);
+  if (values.some((n) => n === null)) return null;
+  return values.reduce<number>((sum, n) => sum + (n ?? 0), 0);
 }
 
 /** Human elapsed for a finished run; "—" while still running. */

@@ -17,6 +17,10 @@ describe('statusTone', () => {
     ['rejected', 'danger'],
     ['pending', 'warning'],
     ['draft', 'brand'],
+    // ETL run outcomes.
+    ['success', 'success'],
+    ['running', 'warning'],
+    ['failed', 'danger'],
     ['anything-else', 'neutral'],
   ])('maps %s → %s tone', (status, tone) => {
     expect(statusTone(status)).toBe(tone);

@@ -1,0 +1,46 @@
+@import 'tailwindcss';
+
+/*
+ * Design tokens for the operator chrome. The palette mirrors SurveyJS's default
+ * (defaultV2) theme so the admin UI and the respondent survey runner read as one
+ * product: `--brand` is SurveyJS's --sjs-primary-backcolor (#19b394), the greys
+ * track its general fore/back colors, and the type stack is its Open Sans default
+ * with a system fallback (no webfont fetch, so it works offline / in the demo).
+ *
+ * These same values are reused at runtime in M8.2 to build the SurveyJS theme,
+ * keeping one source of truth for the shared palette.
+ */
+@theme {
+  --color-brand: #19b394;
+  --color-brand-dark: #14a085;
+  --color-brand-light: #e8f7f3;
+
+  --color-ink: #161616;
+  --color-muted: #5a5a5a;
+  --color-faint: #909090;
+
+  --color-canvas: #f3f5f7;
+  --color-surface: #ffffff;
+  --color-border: #e0e4e8;
+
+  --color-danger: #d92c2c;
+  --color-danger-bg: #fdecec;
+  --color-success: #14a085;
+  --color-success-bg: #e8f7f3;
+  --color-warning: #b8860b;
+  --color-warning-bg: #fcf4e2;
+
+  --font-sans: 'Open Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+html,
+body {
+  margin: 0;
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+
+#app {
+  min-height: 100vh;
+}

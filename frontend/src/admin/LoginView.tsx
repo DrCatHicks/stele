@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 
 import { ApiError } from '../api';
 import { useAuth } from '../auth/AuthContext';
+import { Alert, Button, Card, CardBody, Field } from '../ui';
 
 interface LocationState {
   from?: { pathname: string };
@@ -39,38 +40,37 @@ export function LoginView() {
   };
 
   return (
-    <form onSubmit={handleSubmit} style={{ maxWidth: '20rem', margin: '4rem auto' }}>
-      <h1>Sign in</h1>
-      {error ? (
-        <p role="alert" style={{ color: 'crimson' }}>
-          {error}
-        </p>
-      ) : null}
-      <label style={{ display: 'block', marginBottom: '0.5rem' }}>
-        Email
-        <input
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          autoComplete="username"
-          required
-          style={{ width: '100%' }}
-        />
-      </label>
-      <label style={{ display: 'block', marginBottom: '0.5rem' }}>
-        Password
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          autoComplete="current-password"
-          required
-          style={{ width: '100%' }}
-        />
-      </label>
-      <button type="submit" disabled={submitting}>
-        {submitting ? 'Signing in…' : 'Sign in'}
-      </button>
-    </form>
+    <div className="flex min-h-screen items-center justify-center px-4">
+      <Card className="w-full max-w-sm">
+        <CardBody className="flex flex-col gap-4">
+          <div>
+            <p className="text-sm font-semibold text-brand-dark">Stele</p>
+            <h1 className="text-xl font-semibold text-ink">Sign in</h1>
+          </div>
+          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+            {error ? <Alert tone="error">{error}</Alert> : null}
+            <Field
+              label="Email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="username"
+              required
+            />
+            <Field
+              label="Password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+            />
+            <Button type="submit" disabled={submitting}>
+              {submitting ? 'Signing in…' : 'Sign in'}
+            </Button>
+          </form>
+        </CardBody>
+      </Card>
+    </div>
   );
 }

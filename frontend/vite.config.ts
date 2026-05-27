@@ -1,8 +1,9 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   server: {
     // Bind all interfaces so VS Code dev-container port forwarding (IPv4) reaches
     // Vite; otherwise it binds IPv6-only (::1) and forwarded connections stall.

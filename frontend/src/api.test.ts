@@ -71,7 +71,7 @@ describe('submitResponse', () => {
 
 describe('auth + authoring calls', () => {
   it('login posts credentials and returns the user', async () => {
-    const user = { id: 1, email: 'a@b.c', role: 'admin', disabled: false, created_at: 't' };
+    const user = { id: 1, email: 'a@b.c', roles: ['admin'], disabled: false, created_at: 't' };
     const fetchMock = vi.fn().mockResolvedValue(okJson(user));
     vi.stubGlobal('fetch', fetchMock);
 

@@ -33,7 +33,7 @@ from api.db import SessionLocal
 async def main():
     async with SessionLocal() as s:
         for role in ['admin','researcher','reviewer']:
-            await create_user(s, f'{role}@test.local', 'password123', role)
+            await create_user(s, f'{role}@test.local', 'password123', [role])
             print('created', role)
 asyncio.run(main())
 "
@@ -44,7 +44,7 @@ uv run python scripts/seed_example_survey.py
 
 - [ ] 0.a API responds: `curl -s localhost:8000/health` → `{"status":"ok"}`
 - [ ] 0.b Frontend loads at http://localhost:5173/admin (redirects to login)
-- [ ] 0.c Three users exist: `psql -d stele -c "select email,role from app.users order by role;"`
+- [ ] 0.c Three users exist (roles live in app.user_roles since M9.1): `psql -d stele -c "select u.email, array_agg(ur.role order by ur.role) from app.users u join app.user_roles ur on ur.user_id = u.id group by u.email order by u.email;"`
 
 > Note: the seed assigns each respondent a random UUID. Grab one for the GDPR
 > test: `psql -d stele -c "select distinct respondent_id from app.raw_responses where payload is not null limit 1;"`
@@ -61,7 +61,7 @@ curl -i -c jar.txt -X POST localhost:8000/auth/login \
 curl -s -b jar.txt localhost:8000/auth/me
 curl -i -b jar.txt -X POST localhost:8000/auth/logout
 ```
-- [ ] A1.a login → 200, body has `role:"admin"`, `Set-Cookie: stele_session=…`
+- [ ] A1.a login → 200, body has `roles:["admin"]`, `Set-Cookie: stele_session=…`
 - [ ] A1.b /auth/me → 200 with same user
 - [ ] A1.c logout → 204; a follow-up /auth/me with the jar → 401
 

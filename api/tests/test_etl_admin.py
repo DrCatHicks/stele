@@ -220,7 +220,7 @@ async def _login_as(client: AsyncClient, db_session: AsyncSession, role: str) ->
     from api.auth import service
 
     email = f"etl-{role}@example.com"
-    await service.create_user(db_session, email, "correct-horse-battery-staple", role)
+    await service.create_user(db_session, email, "correct-horse-battery-staple", [role])
     resp = await client.post(
         "/auth/login", json={"email": email, "password": "correct-horse-battery-staple"}
     )

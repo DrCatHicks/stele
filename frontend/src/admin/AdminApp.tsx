@@ -11,13 +11,16 @@ import { SurveyEditorView } from './SurveyEditorView';
 import { SurveyListView } from './SurveyListView';
 
 /**
- * Role-aware landing for "/admin". Reviewers don't author surveys (the list
- * endpoint is author-gated → 403), so send them to their PII queue; everyone
- * else lands on the survey list.
+ * Role-aware landing for "/admin". A reviewer who can't also author surveys (the
+ * list endpoint is author-gated → 403) is sent to their PII queue; anyone who
+ * holds researcher/admin (including alongside reviewer) lands on the survey list.
  */
 function AdminIndex() {
   const { user } = useAuth();
-  if (user?.role === 'reviewer') return <Navigate to="/admin/pii-review" replace />;
+  const canAuthor = user?.roles.includes('researcher') || user?.roles.includes('admin');
+  if (user?.roles.includes('reviewer') && !canAuthor) {
+    return <Navigate to="/admin/pii-review" replace />;
+  }
   return <SurveyListView />;
 }
 

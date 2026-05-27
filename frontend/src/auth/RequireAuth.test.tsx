@@ -45,7 +45,7 @@ describe('RequireAuth', () => {
     mockedFetchCurrentUser.mockResolvedValue({
       id: 1,
       email: 'admin@example.com',
-      role: 'admin',
+      roles: ['admin'],
       disabled: false,
       created_at: 't',
     });

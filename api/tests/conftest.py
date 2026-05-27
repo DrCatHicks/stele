@@ -93,7 +93,7 @@ async def authed_client(client: AsyncClient, db_session: AsyncSession) -> AsyncC
     # pulled in when a test actually needs an authenticated client.
     from api.auth import service
 
-    await service.create_user(db_session, ADMIN_EMAIL, ADMIN_PASSWORD, "admin")
+    await service.create_user(db_session, ADMIN_EMAIL, ADMIN_PASSWORD, ["admin"])
     resp = await client.post("/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
     assert resp.status_code == 200
     return client

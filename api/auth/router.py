@@ -38,7 +38,8 @@ async def login(body: LoginRequest, response: Response, session: SessionDep) -> 
         raise HTTPException(status_code=401, detail="invalid email or password") from None
     row = await service.create_session(session, user)
     _set_session_cookie(response, row.token)
-    return UserOut.model_validate(user)
+    roles = await service.get_roles(session, user.id)
+    return UserOut.from_user(user, roles)
 
 
 @router.post("/logout", status_code=204)
@@ -57,8 +58,9 @@ async def logout(request: Request, response: Response, session: SessionDep) -> R
 
 @router.get("/me", response_model=UserOut)
 async def me(user: CurrentUser, session: SessionDep) -> UserOut:
-    # current_user already validated the session; re-read the full row for output.
+    # current_user already validated the session and resolved the roles; re-read
+    # the full row for the remaining output fields.
     full = await service.get_user(session, user.id)
     if full is None:
         raise HTTPException(status_code=401, detail="not authenticated")
-    return UserOut.model_validate(full)
+    return UserOut.from_user(full, sorted(user.roles))

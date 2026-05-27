@@ -29,22 +29,22 @@ export function AdminLayout() {
           <nav className="flex items-center gap-1">
             {/* Authors see the survey workspace; admins the GDPR console; reviewers
                 the PII screening queue. Role drives which links appear (design §3.10). */}
-            {user && (user.role === 'researcher' || user.role === 'admin') ? (
+            {user && (user.roles.includes('researcher') || user.roles.includes('admin')) ? (
               <NavLink to="/admin" end className={navLinkClass}>
                 Surveys
               </NavLink>
             ) : null}
-            {user?.role === 'admin' ? (
+            {user?.roles.includes('admin') ? (
               <NavLink to="/admin/etl" className={navLinkClass}>
                 ETL
               </NavLink>
             ) : null}
-            {user?.role === 'admin' ? (
+            {user?.roles.includes('admin') ? (
               <NavLink to="/admin/gdpr" className={navLinkClass}>
                 GDPR
               </NavLink>
             ) : null}
-            {user?.role === 'reviewer' ? (
+            {user?.roles.includes('reviewer') ? (
               <NavLink to="/admin/pii-review" className={navLinkClass}>
                 PII Review
               </NavLink>
@@ -54,7 +54,7 @@ export function AdminLayout() {
         {user ? (
           <div className="flex items-center gap-3">
             <span data-testid="current-user" className="text-sm text-muted">
-              {user.email} ({user.role})
+              {user.email} ({user.roles.join(', ')})
             </span>
             <Button type="button" variant="secondary" size="sm" onClick={handleLogout}>
               Log out

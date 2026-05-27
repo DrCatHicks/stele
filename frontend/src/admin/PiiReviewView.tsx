@@ -64,7 +64,7 @@ export function PiiReviewView() {
     };
   }, [status]);
 
-  if (user && user.role !== 'reviewer') {
+  if (user && !user.roles.includes('reviewer')) {
     return <Alert tone="error">Only reviewers can screen free-text PII.</Alert>;
   }
 

@@ -44,10 +44,10 @@ GATED_AUTHORING = [route[:3] for route in AUTHORING_ROUTES]
 WITHDRAWAL = f"/respondents/{NONEXISTENT}/withdrawal"
 
 
-async def _login_as(client: AsyncClient, db_session: AsyncSession, role: str) -> None:
-    """Create an operator with ``role`` and log this client in as them."""
-    email = f"{role}@rbac.example.com"
-    await service.create_user(db_session, email, PASSWORD, role)
+async def _login_as(client: AsyncClient, db_session: AsyncSession, *roles: str) -> None:
+    """Create an operator holding ``roles`` and log this client in as them."""
+    email = f"{'-'.join(roles)}@rbac.example.com"
+    await service.create_user(db_session, email, PASSWORD, list(roles))
     resp = await client.post("/auth/login", json={"email": email, "password": PASSWORD})
     assert resp.status_code == 200
 
@@ -111,6 +111,32 @@ async def test_researcher_can_create_and_publish(
     survey_id = created.json()["survey_id"]
     published = await client.post(f"/surveys/{survey_id}/versions/1/publish")
     assert published.status_code == 200
+
+
+# --- Multi-role: a user clears every gate any of its roles permits -----------
+
+
+async def test_multi_role_user_clears_both_gates(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A researcher+reviewer holds both roles, so it passes the author gate AND
+    the reviewer-only PII gate — gates check role-set intersection, not equality."""
+    await _login_as(client, db_session, "researcher", "reviewer")
+
+    # Author gate (researcher): creating a survey succeeds.
+    created = await client.post("/surveys", json={"definition_json": VALID_DEFINITION})
+    assert created.status_code == 201
+    # Reviewer gate: the PII queue is reachable (clears the gate → 200).
+    assert (await client.get("/admin/pii/free-text")).status_code == 200
+    # But a role neither grants — admin-only withdrawal — is still forbidden.
+    assert (await client.post(WITHDRAWAL, json={})).status_code == 403
+
+
+async def test_me_reports_all_roles(client: AsyncClient, db_session: AsyncSession) -> None:
+    await _login_as(client, db_session, "researcher", "reviewer")
+    resp = await client.get("/auth/me")
+    assert resp.status_code == 200
+    assert resp.json()["roles"] == ["researcher", "reviewer"]  # sorted
 
 
 # --- Withdrawal: gated to {admin} ------------------------------------------

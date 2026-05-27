@@ -36,7 +36,7 @@ async def bootstrap() -> int:
 
     async with SessionLocal() as session:
         try:
-            user = await service.create_user(session, email, password, role)
+            user = await service.create_user(session, email, password, [role])
         except service.DuplicateUser:
             print(f"User {service.normalize_email(email)} already exists; nothing to do.")
             return 0

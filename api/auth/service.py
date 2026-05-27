@@ -1,9 +1,10 @@
 """Authentication logic: user creation, login, sessions.
 
 The API always connects as the single ``stele_api`` role; the {admin,
-researcher, reviewer} roles carried on ``User.role`` are an application-layer
-authorization concept (design doc §3.10), enforced by the dependencies in
-``deps.py`` — never by Postgres grants.
+researcher, reviewer} roles a user holds (rows in ``app.user_roles``) are an
+application-layer authorization concept (design doc §3.10), enforced by the
+dependencies in ``deps.py`` — never by Postgres grants. Roles are multi-valued:
+one account can be e.g. both researcher and reviewer.
 
 Sessions are server-side and revocable: a row in app.sessions with an opaque
 token and an expiry. Logout (or expiry) deletes the row, so a stolen cookie
@@ -13,6 +14,7 @@ stops working the moment the session is revoked — unlike a stateless token.
 from __future__ import annotations
 
 import secrets
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -21,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth import config
 from api.auth.hash import hash_password, verify_password
-from api.auth.models import Session, User
+from api.auth.models import Session, User, UserRole
 
 VALID_ROLES = frozenset({"admin", "researcher", "reviewer"})
 
@@ -46,18 +48,43 @@ def normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
-async def create_user(session: AsyncSession, email: str, password: str, role: str) -> User:
-    """Create an operator account. Used by the bootstrap CLI and (later) admin UI."""
-    if role not in VALID_ROLES:
-        raise InvalidRole(role)
+def normalize_roles(roles: Iterable[str]) -> list[str]:
+    """De-duplicate and validate a set of application roles.
+
+    Returns them sorted (a stable order for storage and output). Raises
+    InvalidRole for an unknown role or an empty set — an account with no role
+    could authenticate but reach nothing, so creation requires at least one.
+    """
+    if isinstance(roles, str):
+        # A bare string satisfies Iterable[str] but would split into characters —
+        # fail loudly rather than validate "admin" as {'a','d','m','i','n'}.
+        raise TypeError("roles must be a collection of role strings, not a single str")
+    unique = set(roles)
+    unknown = unique - VALID_ROLES
+    if unknown:
+        raise InvalidRole(", ".join(sorted(unknown)))
+    if not unique:
+        raise InvalidRole("(at least one role required)")
+    return sorted(unique)
+
+
+async def create_user(
+    session: AsyncSession, email: str, password: str, roles: Iterable[str]
+) -> User:
+    """Create an operator account with one or more roles. Used by the bootstrap
+    CLI and the admin UI (M9.2)."""
+    normalized_roles = normalize_roles(roles)
     normalized = normalize_email(email)
     existing = (
         await session.execute(select(User).where(User.email == normalized))
     ).scalar_one_or_none()
     if existing is not None:
         raise DuplicateUser(normalized)
-    user = User(email=normalized, password_hash=hash_password(password), role=role)
+    user = User(email=normalized, password_hash=hash_password(password))
     session.add(user)
+    await session.flush()  # assign user.id before the role rows reference it
+    for role in normalized_roles:
+        session.add(UserRole(user_id=user.id, role=role))
     await session.commit()
     await session.refresh(user)
     return user
@@ -65,6 +92,14 @@ async def create_user(session: AsyncSession, email: str, password: str, role: st
 
 async def get_user(session: AsyncSession, user_id: int) -> User | None:
     return (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+
+
+async def get_roles(session: AsyncSession, user_id: int) -> list[str]:
+    """The application roles a user holds, sorted. Empty if the user is gone."""
+    rows = (
+        await session.execute(select(UserRole.role).where(UserRole.user_id == user_id))
+    ).scalars()
+    return sorted(rows)
 
 
 async def authenticate(session: AsyncSession, email: str, password: str) -> User:
@@ -108,7 +143,7 @@ class AuthenticatedUser:
 
     id: int
     email: str
-    role: str
+    roles: frozenset[str]
 
 
 async def resolve_session(session: AsyncSession, token: str) -> AuthenticatedUser | None:
@@ -116,7 +151,8 @@ async def resolve_session(session: AsyncSession, token: str) -> AuthenticatedUse
 
     None covers every not-authenticated case: unknown token, expired session, or
     a since-disabled account. Expired rows are deleted opportunistically so the
-    table self-cleans on use.
+    table self-cleans on use. Roles are loaded fresh here, so a grant/revoke
+    takes effect on the holder's next request.
     """
     row = (
         await session.execute(select(Session).where(Session.token == token))
@@ -130,7 +166,8 @@ async def resolve_session(session: AsyncSession, token: str) -> AuthenticatedUse
     user = (await session.execute(select(User).where(User.id == row.user_id))).scalar_one_or_none()
     if user is None or user.disabled:
         return None
-    return AuthenticatedUser(id=user.id, email=user.email, role=user.role)
+    roles = frozenset(await get_roles(session, user.id))
+    return AuthenticatedUser(id=user.id, email=user.email, roles=roles)
 
 
 async def delete_session(session: AsyncSession, token: str) -> None:

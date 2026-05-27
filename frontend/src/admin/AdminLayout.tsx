@@ -1,9 +1,10 @@
-import { Link, Outlet, useNavigate } from 'react-router-dom';
+import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 
 import { useAuth } from '../auth/AuthContext';
+import { Button } from '../ui';
 
-/** Shell for the authenticated admin area: a header with the current user and a
- * logout control, plus the routed view below. */
+/** Shell for the authenticated admin area: a branded header with role-aware
+ * navigation, the current user, and a logout control, plus the routed view. */
 export function AdminLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -12,40 +13,51 @@ export function AdminLayout() {
     void logout().then(() => navigate('/admin/login', { replace: true }));
   };
 
+  const navLinkClass = ({ isActive }: { isActive: boolean }): string =>
+    [
+      'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+      isActive ? 'bg-brand-light text-brand-dark' : 'text-muted hover:bg-canvas hover:text-ink',
+    ].join(' ');
+
   return (
-    <div>
-      <header
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          padding: '0.5rem 1rem',
-          borderBottom: '1px solid #ddd',
-        }}
-      >
-        <nav style={{ display: 'flex', gap: '1rem' }}>
-          {/* Authors see the survey workspace; admins the GDPR console; reviewers
-              the PII screening queue. Role drives which links appear (design §3.10). */}
-          {user && (user.role === 'researcher' || user.role === 'admin') ? (
-            <Link to="/admin">Surveys</Link>
-          ) : null}
-          {user?.role === 'admin' ? <Link to="/admin/gdpr">GDPR</Link> : null}
-          {user?.role === 'reviewer' ? <Link to="/admin/pii-review">PII Review</Link> : null}
-        </nav>
-        <span>
-          {user ? (
-            <>
-              <span data-testid="current-user">
-                {user.email} ({user.role})
-              </span>{' '}
-              <button type="button" onClick={handleLogout}>
-                Log out
-              </button>
-            </>
-          ) : null}
-        </span>
+    <div className="min-h-screen">
+      <header className="flex items-center justify-between border-b border-border bg-surface px-6 py-3">
+        <div className="flex items-center gap-6">
+          <Link to="/admin" className="text-base font-semibold text-brand-dark">
+            Stele
+          </Link>
+          <nav className="flex items-center gap-1">
+            {/* Authors see the survey workspace; admins the GDPR console; reviewers
+                the PII screening queue. Role drives which links appear (design §3.10). */}
+            {user && (user.role === 'researcher' || user.role === 'admin') ? (
+              <NavLink to="/admin" end className={navLinkClass}>
+                Surveys
+              </NavLink>
+            ) : null}
+            {user?.role === 'admin' ? (
+              <NavLink to="/admin/gdpr" className={navLinkClass}>
+                GDPR
+              </NavLink>
+            ) : null}
+            {user?.role === 'reviewer' ? (
+              <NavLink to="/admin/pii-review" className={navLinkClass}>
+                PII Review
+              </NavLink>
+            ) : null}
+          </nav>
+        </div>
+        {user ? (
+          <div className="flex items-center gap-3">
+            <span data-testid="current-user" className="text-sm text-muted">
+              {user.email} ({user.role})
+            </span>
+            <Button type="button" variant="secondary" size="sm" onClick={handleLogout}>
+              Log out
+            </Button>
+          </div>
+        ) : null}
       </header>
-      <main style={{ padding: '1rem' }}>
+      <main className="mx-auto max-w-5xl px-6 py-8">
         <Outlet />
       </main>
     </div>

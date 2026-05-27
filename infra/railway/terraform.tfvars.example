@@ -8,10 +8,18 @@ project_name     = "stele"
 environment_name = "production"
 region           = "us-east4"
 
-# The repo Railway builds the web service from. Install the Railway GitHub app on
-# this repo first, or the build can't pull source.
-source_repo        = "countercheck/stele"
-source_repo_branch = "main"
+# Both app services pull this prebuilt image (D7); CI builds, tests, and pushes it
+# to GHCR. Track the floating `main` tag, or pin to a commit-sha tag for a
+# reproducible rollout (tofu apply -var image_tag=<sha>). Defaults match this repo.
+# image     = "ghcr.io/countercheck/stele"
+# image_tag = "main"
+
+# The image is published to a PUBLIC GHCR package (the repo is public), so Railway
+# pulls it anonymously and these stay empty. To make it private later: flip the
+# GHCR package visibility, then set both (username = a GitHub user/org, password =
+# a read:packages PAT) and re-apply — no module change.
+# image_registry_username = ""
+# image_registry_password = ""
 
 # Attach a public Railway domain (https://<web_subdomain>-<hash>.up.railway.app).
 # Leave empty to deploy internal-only / attach a custom domain out of band.

@@ -117,4 +117,10 @@ USER node
 
 EXPOSE 8000
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["web"]
+# No CMD on purpose. The entrypoint defaults to the `web` verb when given neither a
+# positional arg nor $STELE_ENTRYPOINT. A baked `CMD ["web"]` would be passed as a
+# positional arg even on the ETL service (which pulls this same image with no start
+# command — Railway can't set one on an image deploy via the OpenTofu provider), and
+# the positional arg wins over $STELE_ENTRYPOINT — so the cron would run uvicorn
+# instead of the ETL. Leaving CMD unset lets STELE_ENTRYPOINT=etl select the verb.
+# Explicit `docker run … <verb>` (dev/CI, `railway run`) still works — the arg wins.

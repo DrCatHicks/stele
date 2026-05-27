@@ -20,11 +20,16 @@ _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "docker-entrypoint.s
 
 
 def _run(
-    *args: str, app_dir: Path, api_dir: Path | None = None, port: str | None = None
+    *args: str,
+    app_dir: Path,
+    api_dir: Path | None = None,
+    port: str | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Invoke the dispatcher in print mode. app_dir backs the web/etl cd target;
     api_dir (defaulting to app_dir) backs the migrate cd target — pass them
-    distinct to pin which verb lands where."""
+    distinct to pin which verb lands where. extra_env injects additional env
+    (e.g. STELE_ENTRYPOINT to drive verb selection without a positional arg)."""
     env = {
         "STELE_ENTRYPOINT_PRINT": "1",
         "STELE_APP_DIR": str(app_dir),
@@ -33,6 +38,8 @@ def _run(
     }
     if port is not None:
         env["PORT"] = port
+    if extra_env is not None:
+        env.update(extra_env)
     return subprocess.run(
         ["bash", str(_SCRIPT), *args],
         capture_output=True,
@@ -42,7 +49,8 @@ def _run(
 
 
 def test_default_command_is_web(tmp_path: Path) -> None:
-    # No argument → web (the CMD default in the image).
+    # No argument and no STELE_ENTRYPOINT → web (the entrypoint's built-in default;
+    # the image carries no CMD, so nothing else selects the verb).
     result = _run(app_dir=tmp_path)
     assert result.returncode == 0
     assert "argv=uvicorn api.main:app --host 0.0.0.0 --port 8000" in result.stdout
@@ -103,3 +111,40 @@ def test_unknown_command_fails_loud(tmp_path: Path) -> None:
 @pytest.mark.parametrize("verb", ["web", "migrate", "etl", "seed"])
 def test_known_verbs_exit_zero_in_print_mode(verb: str, tmp_path: Path) -> None:
     assert _run(verb, app_dir=tmp_path).returncode == 0
+
+
+def test_entrypoint_env_selects_verb_without_arg(tmp_path: Path) -> None:
+    # An image-based Railway deploy can't set a start-command override through the
+    # OpenTofu provider, so the ETL cron service selects its verb with
+    # STELE_ENTRYPOINT=etl and no positional arg (CMD ["web"] is not passed). The
+    # dispatcher must fall back to the env var, not silently serve web.
+    result = _run(app_dir=tmp_path, extra_env={"STELE_ENTRYPOINT": "etl"})
+    assert result.returncode == 0
+    assert "argv=python scripts/run_etl.py" in result.stdout
+
+
+def test_positional_arg_beats_entrypoint_env(tmp_path: Path) -> None:
+    # An explicit verb wins over STELE_ENTRYPOINT (the image's CMD ["web"], or a
+    # `railway run … migrate` one-off, must not be shadowed by the env default).
+    result = _run("web", app_dir=tmp_path, extra_env={"STELE_ENTRYPOINT": "etl"})
+    assert result.returncode == 0
+    assert "argv=uvicorn api.main:app" in result.stdout
+
+
+def test_web_migrate_on_start_still_serves_in_print_mode(tmp_path: Path) -> None:
+    # STELE_MIGRATE_ON_START makes the web verb run migrations before serving (the
+    # image-deploy stand-in for railway.json's preDeployCommand). Print mode has no
+    # DB, so the migrate step is skipped and the resolved process is still uvicorn —
+    # proving the flag doesn't divert the web verb away from serving.
+    app_dir = tmp_path / "app"
+    api_dir = tmp_path / "app" / "api"
+    api_dir.mkdir(parents=True)
+    result = _run(
+        "web",
+        app_dir=app_dir,
+        api_dir=api_dir,
+        extra_env={"STELE_MIGRATE_ON_START": "1"},
+    )
+    assert result.returncode == 0
+    assert "argv=uvicorn api.main:app" in result.stdout
+    assert f"cwd={app_dir}" in result.stdout

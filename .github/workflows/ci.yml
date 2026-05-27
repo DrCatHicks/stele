@@ -315,6 +315,7 @@ jobs:
     permissions:
       contents: read
       actions: write # read/write the buildx layer cache (type=gha)
+      packages: write # push the prebuilt image to GHCR on main (D7)
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -324,6 +325,12 @@ jobs:
           context: .
           load: true
           tags: stele:ci
+          # GIT_SHA is the ETL run-provenance source in the image (no git binary,
+          # and RAILWAY_GIT_COMMIT_SHA isn't injected into image-based deploys —
+          # only repo-built ones). Bake it here so the same arg keys the cache the
+          # push step reuses, and so the pushed image carries real provenance.
+          build-args: |
+            GIT_SHA=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Smoke-test composition (runtimes + assets, no DB)
@@ -356,6 +363,62 @@ jobs:
           docker run --rm -e STELE_ENTRYPOINT_PRINT=1 stele:ci migrate | grep -q 'alembic upgrade head'
           docker run --rm -e STELE_ENTRYPOINT_PRINT=1 stele:ci etl     | grep -q 'scripts/run_etl.py'
           docker run --rm -e STELE_ENTRYPOINT_PRINT=1 stele:ci seed    | grep -q 'scripts/bootstrap_admin.py'
+          # The ETL cron service selects its verb with STELE_ENTRYPOINT=etl (image
+          # deploys can't set a start-command override via the OpenTofu provider),
+          # and the web service migrates on start in place of railway.json's
+          # preDeployCommand. Prove both stand-ins resolve (D7).
+          docker run --rm -e STELE_ENTRYPOINT_PRINT=1 -e STELE_ENTRYPOINT=etl stele:ci         | grep -q 'scripts/run_etl.py'
+          docker run --rm -e STELE_ENTRYPOINT_PRINT=1 -e STELE_MIGRATE_ON_START=1 stele:ci web | grep -q 'uvicorn api.main:app'
+
+      - name: Log in to GHCR
+        # On main only — the push step below publishes the prebuilt image. The
+        # workflow's GITHUB_TOKEN with packages:write authenticates to the repo's
+        # own ghcr.io namespace; no separate PAT needed.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push the prebuilt image to GHCR
+        # On main only: the CI build is the authoritative artifact both Railway
+        # services pull (D7 — build once, run the tested bytes everywhere). PRs
+        # build + smoke-test but never push. cache-from=gha makes this a near-instant
+        # re-export of the layers the build step above already produced.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # :main is the floating tag the OpenTofu module references by default;
+          # :<sha> is the immutable tag for a pinned, reproducible rollout
+          # (tofu apply -var image_tag=<sha>).
+          tags: |
+            ghcr.io/${{ github.repository }}:main
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trigger Railway redeploy
+        # Optional auto-deploy (D7): re-pull the just-pushed :main image on both
+        # services so a merge to main goes live without a manual `tofu apply`.
+        # DORMANT until the RAILWAY_TOKEN repo secret is set — the env.RAILWAY_TOKEN
+        # guard skips the step when it's empty (you can't test secrets.* directly in
+        # `if:`), so CI stays green and `tofu apply` remains the deploy path in the
+        # meantime. This is a PROJECT token (the CLI reads RAILWAY_TOKEN as such),
+        # distinct from the workspace token tofu uses — see infra/README.md.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.RAILWAY_TOKEN != ''
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          set -euo pipefail
+          npm i -g @railway/cli
+          # --yes skips the interactive confirm; redeploy re-pulls the current image
+          # tag (:main) the services already reference, so it picks up the new push.
+          railway redeploy --service web --yes
+          railway redeploy --service etl --yes
 
   infra:
     name: Infra · OpenTofu (fmt + validate)

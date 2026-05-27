@@ -29,32 +29,58 @@
 #            STELE_SKIP_BOOTSTRAP=1 to skip when roles are managed out of band
 #   etl      DBT_HOST/DBT_USER/DBT_PASSWORD/DBT_DBNAME + STELE_ETL_DATABASE_URL;
 #            GIT_SHA for run provenance (no git binary in the image — baked at build)
+#
+# Verb selection: the verb is the first argument, else $STELE_ENTRYPOINT, else
+# `web`. A Railway service deploying this image from a registry (not a connected
+# repo) can't set a railway.json start command through the OpenTofu provider, so
+# the ETL cron service selects its verb with STELE_ENTRYPOINT=etl instead of a
+# start-command override (see infra/railway/main.tf).
 set -euo pipefail
 
 APP_DIR="${STELE_APP_DIR:-/app}"
 API_DIR="${STELE_API_DIR:-/app/api}"
 PORT="${PORT:-8000}"
 
-cmd="${1:-web}"
+# Bootstrap roles, schemas, and grants as THIS (admin) identity. Idempotent and
+# prod-only: skipped in the print-mode test hook (no DB) and via
+# STELE_SKIP_BOOTSTRAP=1 when roles are managed out of band. Runs from the app
+# root so bootstrap_roles.py finds the shared grant SQL by its repo-relative path.
+# Shared by the `migrate` verb and web's migrate-on-start (below).
+maybe_bootstrap() {
+  if [[ -z "${STELE_ENTRYPOINT_PRINT:-}" && "${STELE_SKIP_BOOTSTRAP:-}" != "1" ]]; then
+    ( cd "$APP_DIR" && python scripts/bootstrap_roles.py )
+  fi
+}
+
+cmd="${1:-${STELE_ENTRYPOINT:-web}}"
 if [[ $# -gt 0 ]]; then shift; fi
 
 case "$cmd" in
   web)
     cd "$APP_DIR"
+    # Run migrations in-process before serving when STELE_MIGRATE_ON_START=1. An
+    # image-based Railway deploy can't use railway.json's preDeployCommand (no repo
+    # checkout for config-as-code), so the web service migrates on start instead.
+    # At num_replicas=1 the release-safety property holds: a failed migrate aborts
+    # under `set -e` before uvicorn binds, the new container never goes healthy, and
+    # Railway keeps the prior deploy serving. >1 replica would race (alembic isn't
+    # concurrent) — that's the trigger for a separate migrate service (roadmap D3).
+    # Skipped in print mode (no DB). bootstrap-er == migrator: both resolve the
+    # admin identity from STELE_ADMIN_DATABASE_URL (preferred) or STELE_DATABASE_URL.
+    if [[ -z "${STELE_ENTRYPOINT_PRINT:-}" && "${STELE_MIGRATE_ON_START:-}" == "1" ]]; then
+      maybe_bootstrap
+      # alembic.ini sets script_location via %(here)s (absolute), so cwd only
+      # affects prepend_sys_path; cd into api/ to mirror the dev/CI invocation.
+      ( cd "$API_DIR" && alembic upgrade head )
+    fi
     set -- uvicorn api.main:app --host 0.0.0.0 --port "$PORT" "$@"
     ;;
   migrate)
-    # Bootstrap roles, schemas, and grants as THIS (admin) identity *before*
-    # migrating, so the grant SQL's ALTER DEFAULT PRIVILEGES — which is
-    # grantor-specific — reaches the tables alembic creates in the same run
-    # (bootstrap-er must equal migrator). Idempotent and prod-only; skipped in the
-    # print-mode test hook (no DB) and via STELE_SKIP_BOOTSTRAP=1 when roles are
-    # managed out of band. Runs from the app root: bootstrap_roles.py reads the
-    # shared grant SQL by a repo-relative path. set -e fails the migrate closed if
-    # bootstrap fails, before any schema change.
-    if [[ -z "${STELE_ENTRYPOINT_PRINT:-}" && "${STELE_SKIP_BOOTSTRAP:-}" != "1" ]]; then
-      ( cd "$APP_DIR" && python scripts/bootstrap_roles.py )
-    fi
+    # Bootstrap roles/schemas/grants as the admin identity *before* migrating, so
+    # the grant SQL's ALTER DEFAULT PRIVILEGES — which is grantor-specific — reaches
+    # the tables alembic creates in the same run (bootstrap-er must equal migrator).
+    # set -e fails the migrate closed if bootstrap fails, before any schema change.
+    maybe_bootstrap
     # alembic.ini sets script_location via %(here)s (absolute), so cwd only
     # affects prepend_sys_path; cd into api/ to mirror the dev/CI invocation.
     cd "$API_DIR"

@@ -107,7 +107,9 @@ export function PiiReviewView() {
       {error ? <Alert tone="error">Error: {error}</Alert> : null}
 
       {items === null ? (
-        <LoadingState />
+        error ? null : (
+          <LoadingState />
+        )
       ) : items.length === 0 ? (
         <EmptyState>No {status} answers.</EmptyState>
       ) : (

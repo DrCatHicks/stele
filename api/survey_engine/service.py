@@ -238,9 +238,11 @@ async def list_definitions_with_counts(
     """Every survey/version row (newest first), each with its live response count.
 
     Counts come from app.raw_responses (the source of truth), not the read-model,
-    and exclude withdrawn responses: the tombstone workflow nulls `payload`, so
-    `payload IS NOT NULL` is the live-response filter (matches how dbt drops
-    withdrawn rows). A version with no responses yields 0 via the outer join.
+    and exclude withdrawn responses. The filter keys on `definition_snapshot IS NOT
+    NULL` — the same discriminator dbt's stg_raw_responses uses to drop tombstoned
+    rows (the tombstone workflow nulls all content columns together; see the model
+    docstring on why definition_snapshot is the canonical choice). A version with no
+    responses yields 0 via the outer join.
     """
     counts = (
         select(
@@ -248,7 +250,7 @@ async def list_definitions_with_counts(
             RawResponse.survey_version.label("survey_version"),
             func.count().label("n"),
         )
-        .where(RawResponse.payload.isnot(None))
+        .where(RawResponse.definition_snapshot.isnot(None))
         .group_by(RawResponse.survey_id, RawResponse.survey_version)
         .subquery()
     )

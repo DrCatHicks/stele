@@ -134,7 +134,10 @@ export function SurveyListView() {
       />
       {error ? <Alert tone="error">Error: {error}</Alert> : null}
       {surveys === null ? (
-        <LoadingState />
+        // A failed initial load shows the error alone — not a perpetual spinner.
+        error ? null : (
+          <LoadingState />
+        )
       ) : surveys.length === 0 ? (
         <EmptyState>No surveys yet.</EmptyState>
       ) : (

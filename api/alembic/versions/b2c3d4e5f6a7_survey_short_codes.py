@@ -58,6 +58,19 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
         ),
         sa.UniqueConstraint("short_code", name="uq_survey_short_codes_short_code"),
+        # The link-safe format is validated in the service layer (service.normalize_
+        # short_code); mirror it as storage-boundary CHECKs so a code inserted via
+        # psql or admin tooling can't bypass the rules. Kept in lockstep with that
+        # regex: lowercase letters/digits/hyphens, no leading/trailing hyphen, 3-64
+        # chars. Postgres-only SQL is fine here — migrations are not dbt models.
+        sa.CheckConstraint(
+            "short_code ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'",
+            name="ck_survey_short_codes_format",
+        ),
+        sa.CheckConstraint(
+            "char_length(short_code) BETWEEN 3 AND 64",
+            name="ck_survey_short_codes_length",
+        ),
         schema="app",
     )
     # app default privileges already grant stele_api SELECT/INSERT/UPDATE; add

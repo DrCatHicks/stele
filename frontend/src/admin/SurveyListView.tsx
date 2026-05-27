@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import {
@@ -61,6 +61,10 @@ function SurveyCard({ versions }: { versions: SurveySummary[] }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  // Holds the "Copied!" reset timer so we can cancel it if the card unmounts
+  // before it fires (avoids a state update on an unmounted component).
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
 
   if (!survey) return null;
   const totalResponses = versions.reduce((sum, v) => sum + v.response_count, 0);
@@ -81,7 +85,8 @@ function SurveyCard({ versions }: { versions: SurveySummary[] }) {
       await navigator.clipboard.writeText(link);
       setCopied(true);
       setError(null);
-      window.setTimeout(() => setCopied(false), 1500);
+      window.clearTimeout(copiedTimer.current);
+      copiedTimer.current = window.setTimeout(() => setCopied(false), 1500);
     } catch (err: unknown) {
       setError(errorMessage(err));
     }

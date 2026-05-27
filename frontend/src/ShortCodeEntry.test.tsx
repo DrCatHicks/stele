@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -55,5 +56,25 @@ describe('ShortCodeEntry', () => {
     mockedResolve.mockRejectedValue(new ApiError(404, 'no published survey for this link'));
     renderAt('unknown');
     expect(await screen.findByText('Survey not available')).toBeInTheDocument();
+  });
+
+  it('shows a retryable error (not "not available") on a non-404 failure', async () => {
+    // A server/network fault is an operational problem, not a bad link — it must
+    // not be mislabelled as "not available", and the respondent can retry.
+    mockedResolve.mockRejectedValueOnce(new ApiError(500, 'boom'));
+    mockedResolve.mockResolvedValueOnce({ survey_id: 'sid-9', version: 1 });
+    renderAt('flaky');
+
+    expect(await screen.findByText('Something went wrong')).toBeInTheDocument();
+    expect(screen.queryByText('Survey not available')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText('runner sid-9 v1')).toBeInTheDocument();
+  });
+
+  it('treats a thrown non-ApiError (network failure) as retryable', async () => {
+    mockedResolve.mockRejectedValue(new TypeError('Failed to fetch'));
+    renderAt('offline');
+    expect(await screen.findByText('Something went wrong')).toBeInTheDocument();
   });
 });

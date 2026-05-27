@@ -143,5 +143,3 @@ different token in a different place (`infra/railway/.env`).
   pinnable rollout rather than push-to-deploy; better for choosing *when* to ship.
   Opt back into push-to-deploy with the dormant CI redeploy step above (set the
   `RAILWAY_TOKEN` repo secret).
-</content>
-</invoke>

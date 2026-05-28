@@ -66,3 +66,55 @@ class DbCredentialOut(BaseModel):
     created_at: datetime
     revoked_at: datetime | None
     rotated_at: datetime | None
+
+
+class GrantDbAccessRequest(BaseModel):
+    """Admin request to grant a person DB access at a tier (§3.10 revision).
+
+    ``initial_password`` is required only when the recipient has no app account
+    yet (the service raises if it's missing). ``confirm_password`` is the acting
+    admin's own password, required for the reviewer (PII) tier as a step-up.
+    """
+
+    email: str
+    access: str  # 'analyst' | 'reviewer'; validated by the service
+    initial_password: str | None = None
+    confirm_password: str | None = None
+
+
+class ProvisionRequestOut(BaseModel):
+    """Status of a queued provision/rotate/revoke request, for polling."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    action: str
+    access: str | None
+    subject_label: str | None
+    login_role: str | None
+    status: str
+    error_detail: str | None
+    created_at: datetime
+    processed_at: datetime | None
+
+
+class MyCredentialOut(BaseModel):
+    """A credential the signed-in recipient holds, plus whether its one-time
+    password is still waiting to be revealed."""
+
+    login_role: str
+    access: str
+    status: str
+    created_at: datetime
+    has_pending_secret: bool
+
+
+class RevealedSecretOut(BaseModel):
+    """The one-time reveal of a freshly-minted password. Returned once, then the
+    stored ciphertext is wiped; the client must capture it now."""
+
+    login_role: str
+    access: str
+    group_role: str
+    password: str
+    set_role_sql: str

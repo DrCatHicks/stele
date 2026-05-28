@@ -59,6 +59,12 @@ export function AdminLayout() {
                 PII Review
               </NavLink>
             ) : null}
+            {/* Anyone may hold a DB credential to reveal/regenerate (§3.10). */}
+            {user ? (
+              <NavLink to="/admin/my-access" className={navLinkClass}>
+                My DB access
+              </NavLink>
+            ) : null}
           </nav>
         </div>
         {user ? (

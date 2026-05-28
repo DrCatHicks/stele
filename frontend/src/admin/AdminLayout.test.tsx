@@ -104,4 +104,14 @@ describe('AdminLayout', () => {
     expect(screen.queryByRole('link', { name: 'Users' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'DB Credentials' })).not.toBeInTheDocument();
   });
+
+  it('shows an analyst only the My DB access nav', async () => {
+    asRole('analyst');
+    renderLayout();
+    await screen.findByTestId('current-user');
+    expect(screen.getByRole('link', { name: 'My DB access' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Surveys' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'DB Credentials' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'PII Review' })).not.toBeInTheDocument();
+  });
 });

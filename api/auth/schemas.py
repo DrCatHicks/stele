@@ -15,6 +15,22 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class CreateUserRequest(BaseModel):
+    # Normalized + validated by the service (email lowercased, roles checked).
+    email: str
+    password: str
+    roles: list[str]
+
+
+class SetRolesRequest(BaseModel):
+    # Wholesale replacement of the user's roles; must be non-empty (service rejects).
+    roles: list[str]
+
+
+class ResetPasswordRequest(BaseModel):
+    password: str
+
+
 class UserOut(BaseModel):
     id: int
     email: str

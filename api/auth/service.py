@@ -44,6 +44,20 @@ class InvalidRole(AuthError):
     """Role is not one of the application roles."""
 
 
+class UserNotFound(AuthError):
+    """No operator account with the given id."""
+
+
+class LastAdmin(AuthError):
+    """The operation would leave no enabled admin (last-admin protection).
+
+    Raised when disabling, or removing the admin role from, the only remaining
+    enabled admin. The system must always retain at least one operator who can
+    administer accounts, so the change is refused rather than silently locking
+    everyone out of user management.
+    """
+
+
 def normalize_email(email: str) -> str:
     return email.strip().lower()
 
@@ -174,3 +188,110 @@ async def delete_session(session: AsyncSession, token: str) -> None:
     """Revoke a session (logout). Idempotent — deleting a gone token is a no-op."""
     await session.execute(delete(Session).where(Session.token == token))
     await session.commit()
+
+
+async def delete_user_sessions(session: AsyncSession, user_id: int) -> None:
+    """Revoke every session for a user (used on password reset).
+
+    Unlike ``delete_session`` (logout), this deliberately does NOT commit: it's
+    meant to be one statement inside a larger transaction — ``reset_password``
+    changes the hash and revokes sessions atomically, then commits once. Call it
+    only where the caller owns the commit.
+    """
+    await session.execute(delete(Session).where(Session.user_id == user_id))
+
+
+# --- Admin user management (M9.2) -------------------------------------------
+
+
+async def list_users(session: AsyncSession) -> list[tuple[User, list[str]]]:
+    """Every operator account paired with its sorted roles, oldest first.
+
+    Roles are fetched in one query and grouped in Python rather than per-user, so
+    listing N accounts is two queries, not N+1.
+    """
+    users = (await session.execute(select(User).order_by(User.created_at, User.id))).scalars().all()
+    role_rows = (await session.execute(select(UserRole.user_id, UserRole.role))).all()
+    by_user: dict[int, list[str]] = {}
+    for user_id, role in role_rows:
+        by_user.setdefault(user_id, []).append(role)
+    return [(user, sorted(by_user.get(user.id, []))) for user in users]
+
+
+async def _other_enabled_admin_exists(session: AsyncSession, exclude_user_id: int) -> bool:
+    """True if some enabled account other than ``exclude_user_id`` holds admin."""
+    row = (
+        await session.execute(
+            select(UserRole.user_id)
+            .join(User, User.id == UserRole.user_id)
+            .where(
+                UserRole.role == "admin",
+                User.disabled.is_(False),
+                UserRole.user_id != exclude_user_id,
+            )
+            .limit(1)
+        )
+    ).first()
+    return row is not None
+
+
+async def set_user_roles(
+    session: AsyncSession, user_id: int, roles: Iterable[str]
+) -> tuple[User, list[str]]:
+    """Replace a user's roles wholesale. Returns the user and its new sorted roles.
+
+    Validates the new set (InvalidRole on an unknown/empty set, so an account can
+    never be stripped to zero roles). Enforces last-admin protection: stripping
+    admin from the only remaining enabled admin raises LastAdmin.
+    """
+    user = await get_user(session, user_id)
+    if user is None:
+        raise UserNotFound(str(user_id))
+    normalized = normalize_roles(roles)
+    if "admin" not in normalized and not user.disabled:
+        current = await get_roles(session, user_id)
+        if "admin" in current and not await _other_enabled_admin_exists(session, user_id):
+            raise LastAdmin(str(user_id))
+    await session.execute(delete(UserRole).where(UserRole.user_id == user_id))
+    for role in normalized:
+        session.add(UserRole(user_id=user_id, role=role))
+    await session.commit()
+    return user, normalized
+
+
+async def set_user_disabled(
+    session: AsyncSession, user_id: int, disabled: bool
+) -> tuple[User, list[str]]:
+    """Disable or re-enable an account. Returns the user and its sorted roles.
+
+    Disabling takes effect immediately — resolve_session already rejects a
+    disabled user, so live sessions stop working without deleting their rows.
+    Enforces last-admin protection: disabling the only remaining enabled admin
+    raises LastAdmin.
+    """
+    user = await get_user(session, user_id)
+    if user is None:
+        raise UserNotFound(str(user_id))
+    if disabled and not user.disabled:
+        current = await get_roles(session, user_id)
+        if "admin" in current and not await _other_enabled_admin_exists(session, user_id):
+            raise LastAdmin(str(user_id))
+    user.disabled = disabled
+    await session.commit()
+    roles = await get_roles(session, user_id)
+    return user, roles
+
+
+async def reset_password(session: AsyncSession, user_id: int, password: str) -> User:
+    """Set a new password and revoke the user's live sessions in one transaction.
+
+    Revoking sessions is the point: a password reset should invalidate any cookie
+    minted under the old credentials, so the holder must log in again.
+    """
+    user = await get_user(session, user_id)
+    if user is None:
+        raise UserNotFound(str(user_id))
+    user.password_hash = hash_password(password)
+    await delete_user_sessions(session, user_id)
+    await session.commit()
+    return user

@@ -346,6 +346,12 @@ async def grant_db_access(
         raise InvalidAccess(access)
     app_role = access  # the application role mirrors the access tier
     normalized = normalize_email(email)
+    # Reject a duplicate before mutating anything, so a 409 leaves the recipient's
+    # account untouched — the grant is all-or-nothing.
+    if await provisioning.active_grant_exists(
+        session, normalized, access
+    ) or await provisioning.pending_request_exists(session, normalized, access):
+        raise DuplicateGrant(normalized)
     user = (
         await session.execute(select(User).where(User.email == normalized))
     ).scalar_one_or_none()
@@ -353,14 +359,9 @@ async def grant_db_access(
         if not initial_password:
             raise MissingInitialPassword(normalized)
         user = await create_user(session, normalized, initial_password, [app_role])
-    else:
-        if app_role not in await get_roles(session, user.id):
-            session.add(UserRole(user_id=user.id, role=app_role))
-            await session.commit()
-    if await provisioning.active_grant_exists(
-        session, normalized, access
-    ) or await provisioning.pending_request_exists(session, normalized, access):
-        raise DuplicateGrant(normalized)
+    elif app_role not in await get_roles(session, user.id):
+        session.add(UserRole(user_id=user.id, role=app_role))
+        await session.commit()
     request = await provisioning.enqueue_request(
         session,
         action="provision",

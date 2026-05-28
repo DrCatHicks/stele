@@ -6,7 +6,7 @@ gives each of them their own login role — a member of the shared ``stele_analy
 / ``stele_pii_reviewer`` group role (§3.3) — so access is per-person, revocable
 per-person, and audited. The ``CREATE ROLE`` / ``GRANT`` lives in
 ``api.auth.provisioning`` (shared verbatim with the UI-driven worker,
-``api.provisioning.worker``), never behind the public ``stele_api`` connection
+``api.credential_worker``), never behind the public ``stele_api`` connection
 (which has no CREATEROLE and no business minting Postgres logins).
 
 Each action records itself in ``app.db_credential_grants`` (the registry the

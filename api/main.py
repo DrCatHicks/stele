@@ -25,6 +25,7 @@ from starlette.responses import Response
 from starlette.staticfiles import StaticFiles
 from starlette.types import Scope
 
+from api.admin.users_router import router as users_router
 from api.auth.provisioning_router import router as db_credentials_router
 from api.auth.router import router as auth_router
 from api.db import SessionDep
@@ -41,6 +42,7 @@ def create_api_app() -> FastAPI:
     this app directly without restating the prefix on every path."""
     api = FastAPI(title="Survey Engine API")
     api.include_router(auth_router)
+    api.include_router(users_router)
     api.include_router(db_credentials_router)
     api.include_router(surveys_router)
     api.include_router(respondents_router)

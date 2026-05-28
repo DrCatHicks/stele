@@ -14,6 +14,7 @@ dependencies = [
     "dbt-postgres>=1.8",
     "argon2-cffi>=23.1",
     "itsdangerous>=2.2",
+    "cryptography>=43",  # Fernet, for one-time encryption of delivered DB passwords (api/auth/secret_delivery.py)
     "pyyaml>=6",  # api/etl/runner.py parses dbt's sources.yml directly
 ]
 

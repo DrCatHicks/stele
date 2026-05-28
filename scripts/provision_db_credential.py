@@ -4,15 +4,18 @@ The out-of-band, privileged half of design doc §3.10. Analysts and reviewers
 query Postgres *directly* (marts / pii); they don't go through the API. An admin
 gives each of them their own login role — a member of the shared ``stele_analyst``
 / ``stele_pii_reviewer`` group role (§3.3) — so access is per-person, revocable
-per-person, and audited. The ``CREATE ROLE`` / ``GRANT`` lives here, in a tool an
-operator runs deliberately, never behind the public ``stele_api`` connection
+per-person, and audited. The ``CREATE ROLE`` / ``GRANT`` lives in
+``api.auth.provisioning`` (shared verbatim with the UI-driven worker,
+``api.provisioning.worker``), never behind the public ``stele_api`` connection
 (which has no CREATEROLE and no business minting Postgres logins).
 
 Each action records itself in ``app.db_credential_grants`` (the registry the
 admin-only GET /admin/db-credentials endpoint reads) in the *same transaction* as
 the DDL, so role and audit row commit together or not at all. Passwords are shown
 once on the controlling terminal (``/dev/tty``, never stdout — see
-``_open_secret_sink``) and never stored.
+``_open_secret_sink``) and never stored. (The UI flow instead delivers the
+password encrypted, once, to the recipient's own session; this CLI is the
+break-glass path and the operator tool for the analyst tier.)
 
 The login role is created NOINHERIT: connecting with it grants nothing until the
 user runs ``SET ROLE <group>``, so an idle or mis-configured connection is
@@ -41,12 +44,14 @@ import sys
 from typing import TextIO
 
 import psycopg
-from psycopg import sql
 
 from api.auth import provisioning
 
-_DEV_FALLBACK_URL = "postgresql://stele_dev:dev@localhost:5432/stele"
-_FALLBACK_FLAG = "STELE_ALLOW_DEV_FALLBACK"
+# Re-exported from the shared module so the connection/fallback logic lives in one
+# place (api.auth.provisioning, shared with the worker); the CLI keeps the names.
+_DEV_FALLBACK_URL = provisioning._DEV_FALLBACK_URL
+_FALLBACK_FLAG = provisioning._FALLBACK_FLAG
+_role_exists = provisioning.role_exists
 _SECRET_SINK_ENV = "STELE_PROVISION_SECRET_SINK"
 
 
@@ -74,53 +79,27 @@ def _open_secret_sink() -> TextIO:
 
 
 def _conninfo() -> str:
-    """Resolve the elevated libpq conninfo, stripping any SQLAlchemy driver tag.
+    """Resolve the elevated libpq conninfo (delegates to the shared resolver).
 
-    This is a privileged tool that mints Postgres roles, so it refuses to *guess*
-    where to connect: ``STELE_PROVISION_DATABASE_URL`` must be set, or the run
-    fails. Silently defaulting to a hard-coded dev superuser would make a missing
-    or misspelled env var provision into the wrong database. The dev convenience
-    is still available, but only as a deliberate opt-in (``STELE_ALLOW_DEV_FALLBACK=1``).
+    Warns on stderr when the dev-superuser fallback is in play, so an operator
+    can't mistake it for a real connection. Resolution + driver-tag stripping live
+    in ``provisioning.provision_conninfo``.
     """
-    url = os.environ.get("STELE_PROVISION_DATABASE_URL")
-    if url is None:
-        if os.environ.get(_FALLBACK_FLAG, "").strip().lower() not in {"1", "true", "yes"}:
-            raise provisioning.ProvisioningError(
-                "STELE_PROVISION_DATABASE_URL is not set. Point it at a role with CREATEROLE "
-                "and ADMIN OPTION on the group roles (a superuser in dev). To use the local "
-                f"dev superuser fallback, opt in explicitly with {_FALLBACK_FLAG}=1."
-            )
+    if os.environ.get(provisioning._PROVISION_URL_ENV) is None and os.environ.get(
+        _FALLBACK_FLAG, ""
+    ).strip().lower() in {"1", "true", "yes"}:
         print(
             f"{_FALLBACK_FLAG} set; using the dev superuser fallback "
             f"({_DEV_FALLBACK_URL}). Never do this against a real database.",
             file=sys.stderr,
         )
-        url = _DEV_FALLBACK_URL
-    # SQLAlchemy-style "+psycopg" suffix isn't valid libpq; drop it if present.
-    return url.replace("+psycopg", "", 1)
-
-
-def _role_exists(conn: psycopg.Connection, role: str) -> bool:
-    row = conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone()
-    return row is not None
-
-
-def _active_credential(conn: psycopg.Connection, subject: str, access: str) -> str | None:
-    """login_role of an existing active credential for this subject+access, if any."""
-    row = conn.execute(
-        "SELECT login_role FROM app.db_credential_grants "
-        "WHERE subject_label = %s AND access = %s AND status = 'active'",
-        (subject, access),
-    ).fetchone()
-    return row[0] if row else None
+    return provisioning.provision_conninfo()
 
 
 def cmd_provision(args: argparse.Namespace) -> int:
     access: str = args.access
     subject = provisioning.normalize_subject(args.subject)
     group_role = provisioning.group_role_for(access)
-    login_role = provisioning.derive_login_role(access, subject, provisioning.random_suffix())
-    password = provisioning.generate_password()
 
     # Fail closed before any DDL if there's nowhere safe to show the password.
     secret_out = _open_secret_sink()
@@ -132,7 +111,7 @@ def cmd_provision(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
                 return 1
-            existing = _active_credential(conn, subject, access)
+            existing = provisioning.active_credential(conn, subject, access)
             if existing is not None:
                 print(
                     f"{subject!r} already has an active {access} credential ({existing}). "
@@ -140,24 +119,8 @@ def cmd_provision(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
                 return 1
-            # Role DDL and the audit row commit together (Postgres role DDL is
-            # transactional), so we never leave a role without its registry record.
             with conn.transaction():
-                conn.execute(
-                    sql.SQL("CREATE ROLE {login} LOGIN PASSWORD {pw} NOINHERIT").format(
-                        login=sql.Identifier(login_role), pw=sql.Literal(password)
-                    )
-                )
-                conn.execute(
-                    sql.SQL("GRANT {group} TO {login}").format(
-                        group=sql.Identifier(group_role), login=sql.Identifier(login_role)
-                    )
-                )
-                conn.execute(
-                    "INSERT INTO app.db_credential_grants "
-                    "(subject_label, access, login_role, status) VALUES (%s, %s, %s, 'active')",
-                    (subject, access, login_role),
-                )
+                login_role, password = provisioning.provision_in_tx(conn, access, subject)
         # Success: deliver the password to the terminal sink only. The sink is
         # /dev/tty by default (see _open_secret_sink) — a terminal device, not
         # persistent storage — so CodeQL's clear-text-storage alert here is a false
@@ -189,22 +152,13 @@ def cmd_revoke(args: argparse.Namespace) -> int:
             print(f"{login_role} is already revoked; nothing to do.")
             return 0
         with conn.transaction():
-            # DROP ROLE removes membership implicitly, but revoking first keeps the
-            # intent explicit and is harmless if the role was already dropped by hand.
-            if _role_exists(conn, login_role):
-                conn.execute(sql.SQL("DROP ROLE {login}").format(login=sql.Identifier(login_role)))
-            conn.execute(
-                "UPDATE app.db_credential_grants "
-                "SET status = 'revoked', revoked_at = now() WHERE login_role = %s",
-                (login_role,),
-            )
+            provisioning.revoke_in_tx(conn, login_role)
     print(f"Revoked {login_role}: role dropped, registry marked revoked.")
     return 0
 
 
 def cmd_rotate(args: argparse.Namespace) -> int:
     login_role: str = args.login_role
-    password = provisioning.generate_password()
     # Fail closed before changing the password if there's nowhere safe to show it.
     secret_out = _open_secret_sink()
     try:
@@ -217,15 +171,7 @@ def cmd_rotate(args: argparse.Namespace) -> int:
                 print(f"No active credential for login role {login_role!r}.", file=sys.stderr)
                 return 1
             with conn.transaction():
-                conn.execute(
-                    sql.SQL("ALTER ROLE {login} PASSWORD {pw}").format(
-                        login=sql.Identifier(login_role), pw=sql.Literal(password)
-                    )
-                )
-                conn.execute(
-                    "UPDATE app.db_credential_grants SET rotated_at = now() WHERE login_role = %s",
-                    (login_role,),
-                )
+                password = provisioning.rotate_in_tx(conn, login_role)
         # Terminal sink (/dev/tty), not storage — clear-text-storage is a false
         # positive here, same as in cmd_provision (dismissed on the PR).
         secret_out.write(f"new password for {login_role}: {password}\n")

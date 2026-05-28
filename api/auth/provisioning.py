@@ -20,10 +20,13 @@ is the point (§3.10 calls this an operational procedure).
 
 from __future__ import annotations
 
+import os
 import re
 import secrets
 from collections.abc import Sequence
 
+import psycopg
+from psycopg import sql
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -110,3 +113,118 @@ async def list_grants(session: AsyncSession) -> Sequence[DbCredentialGrant]:
         select(DbCredentialGrant).order_by(DbCredentialGrant.created_at.desc())
     )
     return result.scalars().all()
+
+
+# --- Privileged DDL (sync, psycopg) -----------------------------------------
+#
+# The role-creating half of §3.10. These run over an *elevated* connection
+# (CREATEROLE + ADMIN OPTION on the group roles) — never the stele_api request
+# path — and are shared by the operator CLI (scripts/provision_db_credential.py)
+# and the provisioning worker (api.provisioning.worker), so the two never drift.
+
+_PROVISION_URL_ENV = "STELE_PROVISION_DATABASE_URL"
+_DEV_FALLBACK_URL = "postgresql://stele_dev:dev@localhost:5432/stele"
+_FALLBACK_FLAG = "STELE_ALLOW_DEV_FALLBACK"
+
+
+def provision_conninfo() -> str:
+    """Resolve the elevated libpq conninfo, stripping any SQLAlchemy driver tag.
+
+    Refuses to guess: ``STELE_PROVISION_DATABASE_URL`` must be set, or the run
+    fails — a missing/misspelled var must never silently provision into the wrong
+    database. The dev-superuser fallback is available only as a deliberate opt-in
+    (``STELE_ALLOW_DEV_FALLBACK=1``).
+    """
+    url = os.environ.get(_PROVISION_URL_ENV)
+    if url is None:
+        if os.environ.get(_FALLBACK_FLAG, "").strip().lower() not in {"1", "true", "yes"}:
+            raise ProvisioningError(
+                f"{_PROVISION_URL_ENV} is not set. Point it at a role with CREATEROLE "
+                "and ADMIN OPTION on the group roles (a superuser in dev). To use the local "
+                f"dev superuser fallback, opt in explicitly with {_FALLBACK_FLAG}=1."
+            )
+        url = _DEV_FALLBACK_URL
+    # SQLAlchemy-style "+psycopg" suffix isn't valid libpq; drop it if present.
+    return url.replace("+psycopg", "", 1)
+
+
+def role_exists(conn: psycopg.Connection, role: str) -> bool:
+    row = conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone()
+    return row is not None
+
+
+def active_credential(conn: psycopg.Connection, subject: str, access: str) -> str | None:
+    """login_role of an existing active credential for this subject+access, if any."""
+    row = conn.execute(
+        "SELECT login_role FROM app.db_credential_grants "
+        "WHERE subject_label = %s AND access = %s AND status = 'active'",
+        (subject, access),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def provision_in_tx(
+    conn: psycopg.Connection,
+    access: str,
+    subject: str,
+    *,
+    provisioned_by: int | None = None,
+) -> tuple[str, str]:
+    """Mint a per-person login role + its registry row; return (login_role, password).
+
+    MUST run inside ``conn.transaction()``: Postgres role DDL is transactional, so
+    the CREATE ROLE / GRANT and the audit row commit together or not at all — we
+    never leave a role without its registry record. The login is NOINHERIT, so a
+    connection with it is privilege-less until the user runs ``SET ROLE <group>``.
+    The caller owns the group-role-exists and no-active-duplicate prechecks.
+    """
+    group_role = group_role_for(access)
+    login_role = derive_login_role(access, subject, random_suffix())
+    password = generate_password()
+    conn.execute(
+        sql.SQL("CREATE ROLE {login} LOGIN PASSWORD {pw} NOINHERIT").format(
+            login=sql.Identifier(login_role), pw=sql.Literal(password)
+        )
+    )
+    conn.execute(
+        sql.SQL("GRANT {group} TO {login}").format(
+            group=sql.Identifier(group_role), login=sql.Identifier(login_role)
+        )
+    )
+    conn.execute(
+        "INSERT INTO app.db_credential_grants "
+        "(subject_label, access, login_role, status, provisioned_by) "
+        "VALUES (%s, %s, %s, 'active', %s)",
+        (subject, access, login_role, provisioned_by),
+    )
+    return login_role, password
+
+
+def rotate_in_tx(conn: psycopg.Connection, login_role: str) -> str:
+    """Set a new password on an existing login role; return it. Call inside a tx."""
+    password = generate_password()
+    conn.execute(
+        sql.SQL("ALTER ROLE {login} PASSWORD {pw}").format(
+            login=sql.Identifier(login_role), pw=sql.Literal(password)
+        )
+    )
+    conn.execute(
+        "UPDATE app.db_credential_grants SET rotated_at = now() WHERE login_role = %s",
+        (login_role,),
+    )
+    return password
+
+
+def revoke_in_tx(conn: psycopg.Connection, login_role: str) -> None:
+    """Drop the login role and mark its registry row revoked. Call inside a tx.
+
+    DROP ROLE removes group membership implicitly; revoking the registry row keeps
+    the intent explicit and is harmless if the role was already dropped by hand.
+    """
+    if role_exists(conn, login_role):
+        conn.execute(sql.SQL("DROP ROLE {login}").format(login=sql.Identifier(login_role)))
+    conn.execute(
+        "UPDATE app.db_credential_grants "
+        "SET status = 'revoked', revoked_at = now() WHERE login_role = %s",
+        (login_role,),
+    )

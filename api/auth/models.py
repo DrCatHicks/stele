@@ -90,3 +90,62 @@ class DbCredentialGrant(Base):
     )
     revoked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     rotated_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+
+class ProvisionRequest(Base):
+    """Outbox row: an admin's request to provision/rotate/revoke a DB credential.
+
+    stele_api INSERTs these and reads their status; the privileged worker (which
+    holds the role-DDL stele_api lacks) drains the queue and flips status. See
+    migration c4d5e6f7a8b9.
+    """
+
+    __tablename__ = "provision_requests"
+    __table_args__ = {"schema": "app"}
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    # 'provision' | 'rotate' | 'revoke'; DB CHECK backs this up.
+    action: Mapped[str] = mapped_column(Text)
+    # 'analyst' | 'reviewer' for provision; NULL for rotate/revoke. DB CHECK backs this up.
+    access: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Normalized recipient identifier (== target user's email for provision).
+    subject_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_user_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("app.users.id", ondelete="SET NULL"), nullable=True
+    )
+    requested_by: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("app.users.id", ondelete="SET NULL"), nullable=True
+    )
+    # Role acted on; NULL at provision-enqueue (worker derives + writes it back).
+    login_role: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 'pending' | 'done' | 'failed'; DB CHECK backs this up.
+    status: Mapped[str] = mapped_column(Text, server_default=text("'pending'"))
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+    processed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+
+class SecretDelivery(Base):
+    """One-time, encrypted handoff of a freshly-minted DB password (§3.10).
+
+    Written by the worker (ciphertext only), revealed exactly once from the
+    recipient's own session, then wiped. See migration d5e6f7a8b9c0.
+    """
+
+    __tablename__ = "secret_deliveries"
+    __table_args__ = {"schema": "app"}
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    target_user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("app.users.id", ondelete="CASCADE")
+    )
+    login_role: Mapped[str] = mapped_column(Text)
+    # Fernet token of the password; nulled on reveal. Never plaintext, never the key.
+    ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    consumed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )

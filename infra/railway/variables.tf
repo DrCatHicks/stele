@@ -158,3 +158,19 @@ variable "stele_pii_reviewer_password_override" {
   default     = ""
   sensitive   = true
 }
+
+variable "provision_encryption_key" {
+  description = <<-EOT
+    Fernet key (STELE_ENCRYPTION_KEY) that the provisioning worker uses to encrypt a
+    freshly-minted DB password at rest and the web service uses to decrypt it on the
+    one-time reveal (design doc §3.10 revision). MUST be a urlsafe-base64 32-byte key:
+    generate one with
+        python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    Leaving it empty falls back to an INSECURE built-in dev key — never do that in a
+    real deploy. Operator-supplied (never born in tofu state), like the password
+    overrides above.
+  EOT
+  type        = string
+  default     = ""
+  sensitive   = true
+}

@@ -102,13 +102,25 @@ def test_trailing_args_pass_through(tmp_path: Path) -> None:
     assert "argv=python scripts/run_etl.py -- --select dim_question" in result.stdout
 
 
+def test_provision_worker_runs_the_credential_worker_from_app_root(tmp_path: Path) -> None:
+    # The privileged DB-credential worker runs as a module from the app root (so
+    # `import api` resolves), like seed — not the api dir like migrate.
+    app_dir = tmp_path / "app"
+    api_dir = tmp_path / "app" / "api"
+    api_dir.mkdir(parents=True)
+    result = _run("provision-worker", app_dir=app_dir, api_dir=api_dir)
+    assert result.returncode == 0
+    assert "argv=python -m api.credential_worker" in result.stdout
+    assert f"cwd={app_dir}" in result.stdout
+
+
 def test_unknown_command_fails_loud(tmp_path: Path) -> None:
     result = _run("frobnicate", app_dir=tmp_path)
     assert result.returncode == 64  # EX_USAGE
     assert "unknown command 'frobnicate'" in result.stderr
 
 
-@pytest.mark.parametrize("verb", ["web", "migrate", "etl", "seed"])
+@pytest.mark.parametrize("verb", ["web", "migrate", "etl", "seed", "provision-worker"])
 def test_known_verbs_exit_zero_in_print_mode(verb: str, tmp_path: Path) -> None:
     assert _run(verb, app_dir=tmp_path).returncode == 0
 

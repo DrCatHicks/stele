@@ -4,10 +4,11 @@
 # real process and exec's it, so the chosen process becomes PID 1 and receives
 # signals directly (clean shutdown on SIGTERM from the orchestrator).
 #
-#   web       uvicorn serving the composed app (API under /api + SPA at /)
-#   migrate   alembic upgrade head
-#   etl       the logged dbt build (scripts/run_etl.py)
-#   seed      bootstrap the initial admin operator (scripts/bootstrap_admin.py)
+#   web              uvicorn serving the composed app (API under /api + SPA at /)
+#   migrate          alembic upgrade head
+#   etl              the logged dbt build (scripts/run_etl.py)
+#   seed             bootstrap the initial admin operator (scripts/bootstrap_admin.py)
+#   provision-worker drain the DB-credential outbox + run the role DDL (api.credential_worker)
 #
 # Trailing arguments pass through, e.g. `etl -- --select dim_question`.
 #
@@ -100,8 +101,17 @@ case "$cmd" in
     cd "$APP_DIR"
     set -- python scripts/bootstrap_admin.py "$@"
     ;;
+  provision-worker)
+    # Long-running privileged worker (design doc §3.10 revision): drains
+    # app.provision_requests and runs the CREATE ROLE / GRANT over the elevated
+    # STELE_PROVISION_DATABASE_URL — never the stele_api connection. It has no
+    # inbound network surface. Encrypts delivered passwords with STELE_ENCRYPTION_KEY.
+    # Runs from the app root so `import api` resolves like dev/CI.
+    cd "$APP_DIR"
+    set -- python -m api.credential_worker "$@"
+    ;;
   *)
-    echo "docker-entrypoint: unknown command '$cmd' (expected: web | migrate | etl | seed)" >&2
+    echo "docker-entrypoint: unknown command '$cmd' (expected: web | migrate | etl | seed | provision-worker)" >&2
     exit 64
     ;;
 esac

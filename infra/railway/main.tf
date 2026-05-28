@@ -239,6 +239,13 @@ resource "railway_variable_collection" "web" {
       name  = "STELE_SESSION_SECRET"
       value = random_password.session_secret.result
     },
+    # The web service decrypts the one-time DB-credential reveal (§3.10 revision),
+    # so it holds the same Fernet key the provision worker encrypts with. It still
+    # has no CREATEROLE — it only reads + decrypts the secret_deliveries row.
+    {
+      name  = "STELE_ENCRYPTION_KEY"
+      value = var.provision_encryption_key
+    },
     {
       name  = "STELE_COOKIE_SECURE"
       value = var.cookie_secure ? "true" : "false"
@@ -357,6 +364,63 @@ resource "railway_variable_collection" "etl" {
     # provenance (api/etl/runner.py git_sha()). RAILWAY_GIT_COMMIT_SHA is injected
     # only into repo-built services, not image deploys, so the build arg is now the
     # provenance source.
+  ]
+}
+
+# ---- Provisioning worker (long-running, privileged) --------------------------
+#
+# The role-minting half of UI-driven DB-credential provisioning (design doc §3.10
+# revision). Same prebuilt image as web, started on the `provision-worker` verb via
+# STELE_ENTRYPOINT (image deploys can't override the start command). It is the ONLY
+# service that holds an elevated, CREATEROLE-capable connection
+# (STELE_PROVISION_DATABASE_URL = the admin identity): it drains
+# app.provision_requests and runs CREATE ROLE / GRANT, so stele_api never needs
+# CREATEROLE. It has no inbound network surface — no domain, driven only by the
+# outbox.
+#
+# Long-running (no cron_schedule): it polls the queue. num_replicas=1 — FOR UPDATE
+# SKIP LOCKED makes >1 safe, but one is plenty at this scale and avoids contention.
+# NOTE (untested here): like the ETL service, the restartPolicy can't be set on an
+# image service through the provider; set it to ALWAYS in the Railway dashboard so a
+# crash restarts the worker. See docs/verification for the deploy checklist.
+resource "railway_service" "provision_worker" {
+  name       = "provision-worker"
+  project_id = railway_project.stele.id
+
+  source_image                   = local.app_image
+  source_image_registry_username = var.image_registry_username != "" ? var.image_registry_username : null
+  source_image_registry_password = var.image_registry_password != "" ? var.image_registry_password : null
+
+  regions = [{
+    region       = var.region
+    num_replicas = 1
+  }]
+}
+
+resource "railway_variable_collection" "provision_worker" {
+  environment_id = railway_project.stele.default_environment.id
+  service_id     = railway_service.provision_worker.id
+
+  variables = [
+    # Select the `provision-worker` verb without a start-command override.
+    {
+      name  = "STELE_ENTRYPOINT"
+      value = "provision-worker"
+    },
+    # The elevated, CREATEROLE-capable identity — the SAME admin/owner role the web
+    # service uses only for migrate-on-start. Here it is the worker's *runtime*
+    # connection: minting Postgres logins is the worker's whole job. Kept off the
+    # stele_api request path by construction (that's the point of §3.10).
+    {
+      name  = "STELE_PROVISION_DATABASE_URL"
+      value = local.admin_url
+    },
+    # Same Fernet key as the web service: the worker encrypts the one-time password,
+    # web decrypts it on reveal.
+    {
+      name  = "STELE_ENCRYPTION_KEY"
+      value = var.provision_encryption_key
+    },
   ]
 }
 

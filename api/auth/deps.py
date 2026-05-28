@@ -7,8 +7,9 @@ and namespaces the secret to this use (design doc §3.10).
 
 ``current_user`` resolves cookie → session → active user or raises 401.
 ``require_role`` builds on it: 401 if unauthenticated, 403 if none of the user's
-roles are permitted (design doc §3.10). App roles {admin, researcher, reviewer}
-are authorization carried in app.user_roles, never Postgres grants.
+roles are permitted (design doc §3.10). App roles {admin, researcher, reviewer,
+analyst} are authorization carried in app.user_roles, never Postgres grants.
+('analyst' is minimal — it only lets its holder reveal their own DB credential.)
 """
 
 from __future__ import annotations

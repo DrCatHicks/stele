@@ -30,7 +30,7 @@ from psycopg import sql
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.auth.models import DbCredentialGrant
+from api.auth.models import DbCredentialGrant, ProvisionRequest
 
 # Access tier → the §3.3 Postgres group role whose privileges the login inherits
 # via SET ROLE. analyst reads marts; reviewer reads pii.
@@ -113,6 +113,100 @@ async def list_grants(session: AsyncSession) -> Sequence[DbCredentialGrant]:
         select(DbCredentialGrant).order_by(DbCredentialGrant.created_at.desc())
     )
     return result.scalars().all()
+
+
+async def grants_for_subject(
+    session: AsyncSession, subject_label: str
+) -> Sequence[DbCredentialGrant]:
+    """A subject's credential grants, newest first — for the recipient's own view."""
+    result = await session.execute(
+        select(DbCredentialGrant)
+        .where(DbCredentialGrant.subject_label == subject_label)
+        .order_by(DbCredentialGrant.created_at.desc())
+    )
+    return result.scalars().all()
+
+
+async def get_grant_by_login_role(
+    session: AsyncSession, login_role: str
+) -> DbCredentialGrant | None:
+    return (
+        await session.execute(
+            select(DbCredentialGrant).where(DbCredentialGrant.login_role == login_role)
+        )
+    ).scalar_one_or_none()
+
+
+async def active_grant_exists(session: AsyncSession, subject_label: str, access: str) -> bool:
+    row = (
+        await session.execute(
+            select(DbCredentialGrant.id).where(
+                DbCredentialGrant.subject_label == subject_label,
+                DbCredentialGrant.access == access,
+                DbCredentialGrant.status == "active",
+            )
+        )
+    ).first()
+    return row is not None
+
+
+# --- Outbox (async, the stele_api request path) -----------------------------
+#
+# The API never touches role DDL; it only writes/reads the outbox. The worker
+# (above, sync, elevated) consumes it.
+
+
+async def enqueue_request(
+    session: AsyncSession,
+    *,
+    action: str,
+    access: str | None = None,
+    subject_label: str | None = None,
+    target_user_id: int | None = None,
+    requested_by: int | None = None,
+    login_role: str | None = None,
+) -> ProvisionRequest:
+    req = ProvisionRequest(
+        action=action,
+        access=access,
+        subject_label=subject_label,
+        target_user_id=target_user_id,
+        requested_by=requested_by,
+        login_role=login_role,
+    )
+    session.add(req)
+    await session.commit()
+    await session.refresh(req)
+    return req
+
+
+async def get_request(session: AsyncSession, request_id: int) -> ProvisionRequest | None:
+    return (
+        await session.execute(select(ProvisionRequest).where(ProvisionRequest.id == request_id))
+    ).scalar_one_or_none()
+
+
+async def list_requests(session: AsyncSession, *, limit: int = 50) -> Sequence[ProvisionRequest]:
+    """Recent provisioning requests, newest first — for the admin activity view."""
+    result = await session.execute(
+        select(ProvisionRequest).order_by(ProvisionRequest.created_at.desc()).limit(limit)
+    )
+    return result.scalars().all()
+
+
+async def pending_request_exists(session: AsyncSession, subject_label: str, access: str) -> bool:
+    """Whether a provision for this (subject, access) is already queued/unprocessed."""
+    row = (
+        await session.execute(
+            select(ProvisionRequest.id).where(
+                ProvisionRequest.subject_label == subject_label,
+                ProvisionRequest.access == access,
+                ProvisionRequest.action == "provision",
+                ProvisionRequest.status == "pending",
+            )
+        )
+    ).first()
+    return row is not None
 
 
 # --- Privileged DDL (sync, psycopg) -----------------------------------------

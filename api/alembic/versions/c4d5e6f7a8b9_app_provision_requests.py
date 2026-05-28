@@ -8,7 +8,7 @@ The request half of the UI-driven provisioning flow (design doc §3.10 revision,
 drafted for review). The whole point of §3.10 is that ``stele_api`` has no
 role-DDL privilege and never mints Postgres logins — so the API cannot provision
 a credential directly. Instead it *enqueues intent* here, and a separate
-privileged worker (``api.provisioning.worker``, run over an elevated
+privileged worker (``api.credential_worker``, run over an elevated
 ``STELE_PROVISION_DATABASE_URL`` connection that owns ``CREATEROLE`` + admin on
 the group roles) drains the queue and performs the ``CREATE ROLE`` / ``GRANT``.
 ``stele_api`` only ever INSERTs a row and reads its status; it can never flip a

@@ -214,7 +214,7 @@ async def pending_request_exists(session: AsyncSession, subject_label: str, acce
 # The role-creating half of §3.10. These run over an *elevated* connection
 # (CREATEROLE + ADMIN OPTION on the group roles) — never the stele_api request
 # path — and are shared by the operator CLI (scripts/provision_db_credential.py)
-# and the provisioning worker (api.provisioning.worker), so the two never drift.
+# and the provisioning worker (api.credential_worker), so the two never drift.
 
 _PROVISION_URL_ENV = "STELE_PROVISION_DATABASE_URL"
 _DEV_FALLBACK_URL = "postgresql://stele_dev:dev@localhost:5432/stele"

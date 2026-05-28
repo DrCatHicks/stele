@@ -166,9 +166,11 @@ variable "provision_encryption_key" {
     one-time reveal (design doc §3.10 revision). MUST be a urlsafe-base64 32-byte key:
     generate one with
         python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-    Leaving it empty falls back to an INSECURE built-in dev key — never do that in a
-    real deploy. Operator-supplied (never born in tofu state), like the password
-    overrides above.
+    Leaving it empty does NOT enable an insecure fallback — both services pass it
+    through as STELE_ENCRYPTION_KEY="", which fails closed (Fernet rejects an empty
+    key), so every grant/reveal errors until a real key is set. The built-in dev key
+    is reached only when the var is entirely unset (local dev), never via this empty
+    default. Operator-supplied (never born in tofu state), like the overrides above.
   EOT
   type        = string
   default     = ""

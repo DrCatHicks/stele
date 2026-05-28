@@ -45,6 +45,8 @@ docker compose -f .devcontainer/docker-compose.yml down -v
 
 Role/grant plumbing: `.devcontainer/postgres-init/01-roles.sql` (dev/CI role creation) + `02-schemas-and-grants.sql` (schemas/grants, shared verbatim with prod via `scripts/bootstrap_roles.py`); both idempotent. Table changes: Alembic.
 
+Analyst/reviewer DB credentials are minted out of band of `stele_api` (design doc §3.10): the API only enqueues into `app.provision_requests`; the privileged `api.credential_worker` (elevated `STELE_PROVISION_DATABASE_URL`, the one connection with `CREATEROLE`) drains the outbox, runs the `CREATE ROLE`/`GRANT`, and writes the one-time Fernet-encrypted password to `app.secret_deliveries`, which the recipient reveals exactly once from their own session. Shared DDL: `api.auth.provisioning` (also used by the `scripts/provision_db_credential.py` break-glass CLI).
+
 ## Invariants — don't break
 
 1. `app.raw_responses` is append-only and the sole ETL source. dbt reads it only, never the normalized `app.responses` / `app.response_items` read-model.
@@ -109,6 +111,7 @@ New question type = work in three places: runtime, publish test, dbt staging.
 
 - Modify `survey-engine-*.md`. Treat the design docs as read-only reference; propose edits in chat, don't sync them to code changes.
 - Modify role/grant SQL in `.devcontainer/postgres-init/{01-roles,02-schemas-and-grants}.sql` (or the prod runner `scripts/bootstrap_roles.py` that applies the latter). Grant changes are silent until they bite under a non-superuser role — the `prod-bootstrap-sim` CI job rehearses that path.
+- Give `stele_api` `CREATEROLE`, or put credential role-DDL in the request path. Role-minting lives ONLY in `api.credential_worker` / the `scripts/provision_db_credential.py` CLI over `STELE_PROVISION_DATABASE_URL`; the API just enqueues into `app.provision_requests`. And `stele_analyst`/`stele_pii_reviewer` must never accumulate grants beyond their one schema (`marts`/`pii`) — that boundary is what keeps a leaked analyst credential low-stakes.
 - Make dbt read normalized `app.*` tables.
 - `UPDATE`/`DELETE` `raw_responses` outside the tombstone workflow.
 - Auto-populate `parent_question_id` from any heuristic.

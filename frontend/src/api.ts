@@ -353,6 +353,105 @@ export async function listDbCredentials(): Promise<DbCredential[]> {
   return request<DbCredential[]>('/admin/db-credentials');
 }
 
+// The two data-access tiers a credential can grant (mirrors provisioning.VALID_ACCESS).
+export const DB_ACCESS_TIERS = ['analyst', 'reviewer'] as const;
+export type DbAccessTier = (typeof DB_ACCESS_TIERS)[number];
+
+// A queued provision/rotate/revoke request. status is 'pending' until the
+// privileged worker processes it, then 'done' | 'failed' (error_detail set).
+export interface ProvisionRequest {
+  id: number;
+  action: string;
+  access: string | null;
+  subject_label: string | null;
+  login_role: string | null;
+  status: string;
+  error_detail: string | null;
+  created_at: string;
+  processed_at: string | null;
+}
+
+// Grant a person DB access at a tier. A brand-new recipient needs initialPassword
+// (their first login); the reviewer (PII) tier needs confirmPassword — the admin's
+// own password, re-entered as a step-up. Throws ApiError(403) if that's missing or
+// wrong, 409 if the subject already holds/awaits a credential for the tier, 422 on
+// a bad tier or a new account with no initial password.
+export async function grantDbAccess(
+  email: string,
+  access: DbAccessTier,
+  opts: { initialPassword?: string; confirmPassword?: string } = {},
+): Promise<ProvisionRequest> {
+  return request<ProvisionRequest>(
+    '/admin/db-credentials/grant',
+    jsonInit('POST', {
+      email,
+      access,
+      initial_password: opts.initialPassword ?? null,
+      confirm_password: opts.confirmPassword ?? null,
+    }),
+  );
+}
+
+// Enqueue a revoke of an active credential. Throws ApiError(404) if unknown, 409 if
+// it isn't active.
+export async function revokeDbCredential(loginRole: string): Promise<ProvisionRequest> {
+  return request<ProvisionRequest>(
+    `/admin/db-credentials/${encodeURIComponent(loginRole)}/revoke`,
+    jsonInit('POST'),
+  );
+}
+
+// Recent provision/rotate/revoke requests, newest first — the admin's view of the
+// async queue (a request stays 'pending' until the worker processes it).
+export async function listProvisionRequests(): Promise<ProvisionRequest[]> {
+  return request<ProvisionRequest[]>('/admin/db-credentials/requests');
+}
+
+// --- Self-service DB credentials (the signed-in recipient) -----------------
+
+// A credential the signed-in user holds, plus whether its one-time password is
+// still waiting to be revealed.
+export interface MyCredential {
+  login_role: string;
+  access: string;
+  status: string;
+  created_at: string;
+  has_pending_secret: boolean;
+}
+
+// The one-time reveal of a freshly-minted password. Returned once; the stored copy
+// is wiped on read, so the client must capture it now.
+export interface RevealedSecret {
+  login_role: string;
+  access: string;
+  group_role: string;
+  password: string;
+  set_role_sql: string;
+}
+
+export async function listMyCredentials(): Promise<MyCredential[]> {
+  return request<MyCredential[]>('/me/db-credentials');
+}
+
+// Reveal a credential's password exactly once. Throws ApiError(410) when there's
+// nothing to reveal (already revealed, expired, or not minted yet), 404 if the
+// credential isn't the caller's.
+export async function revealMyCredential(loginRole: string): Promise<RevealedSecret> {
+  return request<RevealedSecret>(
+    `/me/db-credentials/${encodeURIComponent(loginRole)}/reveal`,
+    jsonInit('POST'),
+  );
+}
+
+// Regenerate (rotate) the caller's own credential — enqueues a rotate; once the
+// worker finishes, a fresh one-time password is waiting to be revealed.
+export async function regenerateMyCredential(loginRole: string): Promise<ProvisionRequest> {
+  return request<ProvisionRequest>(
+    `/me/db-credentials/${encodeURIComponent(loginRole)}/regenerate`,
+    jsonInit('POST'),
+  );
+}
+
 // --- ETL runs (admin) ------------------------------------------------------
 
 // A dbt node that didn't pass, surfaced to explain a failed run.

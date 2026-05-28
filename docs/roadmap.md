@@ -90,6 +90,7 @@ decomposed into PR-sized stories.
 - **D6** — **Retention-vs-erasure** policy (tie to the M2.2 tombstone).
 - ~~**D7** — Shared **prebuilt image in registry** (eliminate the cron build-twice).~~ **Done** — CI builds/tests/pushes one GHCR image; `web` + `etl` both pull it (migrate-on-start + `STELE_ENTRYPOINT=etl` replace the deleted `railway.json` config). See `docs/verification/d7-prebuilt-image.md`. Leftover: web healthcheck + etl restart-policy are now Railway dashboard settings.
 - **D8** — Operator-supplied secrets **never born in state** (override vars exist; flip the posture for real prod).
+- **D9** — **Operator credential lifecycle** — no password-complexity validation on create/reset (`/admin/users`, M9.2) and no self-service password change (admin-reset only). Consistent with the no-policy login/bootstrap today; deferred deliberately — operators are a small internal set, not public clients. Revisit when the operator base grows or a client engagement demands a password policy.
 
 ### E. Process / docs loose ends
 

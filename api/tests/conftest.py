@@ -118,10 +118,14 @@ def elevated_conn():  # type: ignore[no-untyped-def]
     from api.auth import provisioning
 
     os.environ.setdefault("STELE_ALLOW_DEV_FALLBACK", "1")
+    # Bind before the try so the value is defined on every path to ``yield``:
+    # pytest.skip() raises, but static analysis doesn't model it as no-return.
+    conn: psycopg.Connection | None = None
     try:
         conn = psycopg.connect(provisioning.provision_conninfo(), autocommit=True)
     except (provisioning.ProvisioningError, psycopg.OperationalError) as exc:
         pytest.skip(f"no elevated connection available for seeding: {exc}")
+    assert conn is not None
     try:
         yield conn
     finally:

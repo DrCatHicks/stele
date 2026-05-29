@@ -113,6 +113,10 @@ locals {
   # The ETL cron service's run-log writes (ops.etl_runs) go through this; dbt itself
   # reads the DBT_* vars below. Both connect as least-privilege stele_etl.
   stele_etl_url = "postgresql+psycopg://stele_etl:${local.stele_etl_password}@${local.pg_host}:${local.pg_port}/${var.database_name}"
+  # Read-only marts access for the web service's CSV export. stele_api has no
+  # marts grant (schema table in CLAUDE.md), so without this the export falls back
+  # to STELE_DATABASE_URL and 500s on `permission denied for schema marts`.
+  stele_analyst_url = "postgresql+psycopg://stele_analyst:${local.stele_analyst_password}@${local.pg_host}:${local.pg_port}/${var.database_name}"
 }
 
 # ---- Project + default environment -------------------------------------------
@@ -209,6 +213,12 @@ resource "railway_variable_collection" "web" {
     {
       name  = "STELE_ADMIN_DATABASE_URL"
       value = local.admin_url
+    },
+    # Read-only marts connection for the CSV export. stele_api can't read marts,
+    # so the export reads as stele_analyst over this separate connection.
+    {
+      name  = "STELE_ANALYST_DATABASE_URL"
+      value = local.stele_analyst_url
     },
     # Run bootstrap + `alembic upgrade head` before uvicorn binds (the image-deploy
     # stand-in for railway.json's preDeployCommand — see the header). Set to "0" to

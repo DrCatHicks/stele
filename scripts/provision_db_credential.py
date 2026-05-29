@@ -119,8 +119,9 @@ def cmd_provision(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
                 return 1
+            password = provisioning.generate_password()
             with conn.transaction():
-                login_role, password = provisioning.provision_in_tx(conn, access, subject)
+                login_role = provisioning.provision_in_tx(conn, access, subject, password=password)
         # Success: deliver the password to the terminal sink only. The sink is
         # /dev/tty by default (see _open_secret_sink) — a terminal device, not
         # persistent storage — so CodeQL's clear-text-storage alert here is a false

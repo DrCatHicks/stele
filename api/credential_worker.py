@@ -78,8 +78,9 @@ def _do_provision(conn: psycopg.Connection, req: _Request) -> str:
         raise provisioning.ProvisioningError(
             f"{req.subject_label!r} already has an active {req.access} credential"
         )
-    login_role, password = provisioning.provision_in_tx(
-        conn, req.access, req.subject_label, provisioned_by=req.requested_by
+    password = provisioning.generate_password()
+    login_role = provisioning.provision_in_tx(
+        conn, req.access, req.subject_label, password=password, provisioned_by=req.requested_by
     )
     secret_delivery.store_secret_in_tx(
         conn, target_user_id=req.target_user_id, login_role=login_role, password=password

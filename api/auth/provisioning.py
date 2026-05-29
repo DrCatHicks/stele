@@ -262,9 +262,15 @@ def provision_in_tx(
     access: str,
     subject: str,
     *,
+    password: str,
     provisioned_by: int | None = None,
-) -> tuple[str, str]:
-    """Mint a per-person login role + its registry row; return (login_role, password).
+) -> str:
+    """Mint a per-person login role + its registry row; return the login-role name.
+
+    The caller generates ``password`` and owns delivering it (terminal, or the
+    encrypted one-time handoff). Keeping the secret out of the return value means
+    the *name* this returns is never entangled with it — callers can log/print the
+    role name freely.
 
     MUST run inside ``conn.transaction()``: Postgres role DDL is transactional, so
     the CREATE ROLE / GRANT and the audit row commit together or not at all — we
@@ -274,7 +280,6 @@ def provision_in_tx(
     """
     group_role = group_role_for(access)
     login_role = derive_login_role(access, subject, random_suffix())
-    password = generate_password()
     conn.execute(
         sql.SQL("CREATE ROLE {login} LOGIN PASSWORD {pw} NOINHERIT").format(
             login=sql.Identifier(login_role), pw=sql.Literal(password)
@@ -291,7 +296,7 @@ def provision_in_tx(
         "VALUES (%s, %s, %s, 'active', %s)",
         (subject, access, login_role, provisioned_by),
     )
-    return login_role, password
+    return login_role
 
 
 def rotate_in_tx(conn: psycopg.Connection, login_role: str) -> str:

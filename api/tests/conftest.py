@@ -97,3 +97,49 @@ async def authed_client(client: AsyncClient, db_session: AsyncSession) -> AsyncC
     resp = await client.post("/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
     assert resp.status_code == 200
     return client
+
+
+@pytest.fixture
+def elevated_conn():  # type: ignore[no-untyped-def]
+    """A committed, autocommit psycopg connection over the *elevated* provisioning
+    identity (CREATEROLE/superuser), for seeding rows the least-privileged stele_api
+    test session may not write — notably app.secret_deliveries, whose INSERT is
+    revoked from stele_api by design (§3.10). CI supplies STELE_PROVISION_DATABASE_URL;
+    local dev uses the superuser fallback. Skips cleanly when neither is available.
+
+    Rows written here are *committed* (outside the per-test rollback), so callers
+    must clean up what they insert — deleting the seeded app.users row cascades to
+    its secret_deliveries.
+    """
+    import os
+
+    import psycopg
+
+    from api.auth import provisioning
+
+    os.environ.setdefault("STELE_ALLOW_DEV_FALLBACK", "1")
+    try:
+        conn = psycopg.connect(provisioning.provision_conninfo(), autocommit=True)
+    except (provisioning.ProvisioningError, psycopg.OperationalError) as exc:
+        pytest.skip(f"no elevated connection available for seeding: {exc}")
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+@pytest_asyncio.fixture
+async def live_client() -> AsyncIterator[AsyncClient]:
+    """An AsyncClient with NO session override — the app uses its real, *committing*
+    session (api.db.get_session), not the rollback-per-test one.
+
+    Integration tests that seed committed rows over ``elevated_conn`` (e.g.
+    app.secret_deliveries, which stele_api may not INSERT) must use this rather than
+    ``client``: mixing externally-committed rows with the transactional session
+    deadlocks at cleanup (the open transaction holds row/FK locks the elevated
+    DELETE waits on). Here each request commits and releases its locks, so the test
+    can clean up its own committed rows in a finally. Such tests own their cleanup.
+    """
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as test_client:
+        yield test_client

@@ -42,6 +42,12 @@ async def my_credentials(session: SessionDep, user: CurrentUser) -> list[MyCrede
     return out
 
 
+# Ownership is checked by subject_label == the caller's email. db_credential_grants
+# carries no user FK by design (§3.10 — the CLI provisions DB principals who aren't
+# app users), so email is the only link to a grant. This is safe because email is
+# immutable here (no change-email flow), and the secret itself is independently
+# scoped to the user id in secret_delivery.reveal_for_user — so even a hypothetical
+# email reassignment couldn't hand another account someone else's password.
 @router.post("/{login_role}/reveal", response_model=RevealedSecretOut)
 async def reveal_credential(
     login_role: str, session: SessionDep, user: CurrentUser

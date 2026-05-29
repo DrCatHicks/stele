@@ -83,6 +83,17 @@ def store_secret_in_tx(
     this delivery commit together — fail-closed, never a role whose password no
     one can retrieve.
     """
+    # Retire any earlier still-pending delivery for this role first: its plaintext
+    # no longer matches the role's password (provision then re-grant, or a rotate),
+    # so revealing it would hand back a credential that silently fails to
+    # authenticate. Nulling its ciphertext drops it from both reveal and
+    # has_pending, keeping the invariant "at most one revealable delivery per role,
+    # always the current password".
+    conn.execute(
+        "UPDATE app.secret_deliveries SET ciphertext = NULL "
+        "WHERE login_role = %s AND ciphertext IS NOT NULL AND consumed_at IS NULL",
+        (login_role,),
+    )
     conn.execute(
         "INSERT INTO app.secret_deliveries "
         "(target_user_id, login_role, ciphertext, expires_at) "

@@ -241,6 +241,17 @@ def test_rotate_then_revoke_requests() -> None:
                 )
                 is not None
             )
+            # The un-revealed provision delivery is superseded by the rotate's fresh
+            # one: at most one revealable delivery per role, matching the live password.
+            assert (
+                _scalar(
+                    conn,
+                    "SELECT count(*) FROM app.secret_deliveries WHERE login_role = %s "
+                    "AND ciphertext IS NOT NULL AND consumed_at IS NULL",
+                    (login_role,),
+                )
+                == 1
+            )
             ciphertext = _scalar(
                 conn,
                 "SELECT ciphertext FROM app.secret_deliveries "

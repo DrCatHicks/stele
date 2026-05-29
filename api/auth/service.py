@@ -347,27 +347,34 @@ async def grant_db_access(
     app_role = access  # the application role mirrors the access tier
     normalized = normalize_email(email)
     # Reject a duplicate before mutating anything, so a 409 leaves the recipient's
-    # account untouched — the grant is all-or-nothing.
+    # account untouched.
     if await provisioning.active_grant_exists(
         session, normalized, access
     ) or await provisioning.pending_request_exists(session, normalized, access):
         raise DuplicateGrant(normalized)
+    # The account/role change and the queued request commit together (a single
+    # commit at the end), so the grant is all-or-nothing: a failed enqueue never
+    # leaves an orphaned account or a dangling role with no request behind it.
     user = (
         await session.execute(select(User).where(User.email == normalized))
     ).scalar_one_or_none()
     if user is None:
         if not initial_password:
             raise MissingInitialPassword(normalized)
-        user = await create_user(session, normalized, initial_password, [app_role])
+        user = User(email=normalized, password_hash=hash_password(initial_password))
+        session.add(user)
+        await session.flush()  # assign user.id before the role + request reference it
+        session.add(UserRole(user_id=user.id, role=app_role))
     elif app_role not in await get_roles(session, user.id):
         session.add(UserRole(user_id=user.id, role=app_role))
-        await session.commit()
-    request = await provisioning.enqueue_request(
-        session,
+    request = ProvisionRequest(
         action="provision",
         access=access,
         subject_label=normalized,
         target_user_id=user.id,
         requested_by=actor_id,
     )
+    session.add(request)
+    await session.commit()
+    await session.refresh(request)
     return request, user.id

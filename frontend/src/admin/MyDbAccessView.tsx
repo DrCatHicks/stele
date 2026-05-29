@@ -14,6 +14,12 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+// Regenerate is async (a worker mints the new password out of band), so after
+// enqueueing we poll for the fresh one-time secret to land rather than making the
+// user reload. Bounded so the page doesn't spin forever if the worker is down.
+const POLL_ATTEMPTS = 15;
+const POLL_INTERVAL_MS = 2000;
+
 /**
  * The signed-in recipient's own database credentials (design doc §3.10 revision).
  * An analyst or reviewer reveals their freshly-minted password here exactly once —
@@ -65,18 +71,30 @@ export function MyDbAccessView() {
       .finally(() => setBusy(false));
   };
 
+  // Poll for the rotated password to land, refreshing the table each tick so the
+  // Reveal button reappears on its own (no full-page reload needed).
+  const waitForPending = async (loginRole: string): Promise<void> => {
+    for (let attempt = 0; attempt < POLL_ATTEMPTS; attempt++) {
+      const rows = await listMyCredentials();
+      setCreds(rows);
+      if (rows.some((c) => c.login_role === loginRole && c.has_pending_secret)) {
+        setNotice('Your new password is ready — click Reveal.');
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    }
+    setNotice('Still processing — reload the page in a moment to reveal your new password.');
+  };
+
   const handleRegenerate = (loginRole: string): void => {
     if (!window.confirm(`Regenerate the password for ${loginRole}? The current one stops working.`))
       return;
     setBusy(true);
     setError(null);
-    setNotice(null);
     setRevealed(null);
+    setNotice('Regenerating — waiting for your new password…');
     regenerateMyCredential(loginRole)
-      .then(() => {
-        setNotice('Regenerating — your new password will be ready to reveal shortly. Refresh.');
-        refresh();
-      })
+      .then(() => waitForPending(loginRole))
       .catch((err: unknown) => setError(errorMessage(err)))
       .finally(() => setBusy(false));
   };

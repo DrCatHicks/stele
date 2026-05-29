@@ -79,8 +79,11 @@ describe('MyDbAccessView', () => {
     expect(screen.getByRole('button', { name: 'Regenerate' })).toBeInTheDocument();
   });
 
-  it('regenerates after confirmation', async () => {
-    mockedList.mockResolvedValue([credential({ has_pending_secret: false })]);
+  it('regenerates, then polls until the new password is ready to reveal', async () => {
+    // Initial mount: nothing pending. After regenerate, the worker has produced the
+    // new secret, so the poll's next read shows it pending.
+    mockedList.mockResolvedValueOnce([credential({ has_pending_secret: false })]);
+    mockedList.mockResolvedValue([credential({ has_pending_secret: true })]);
     mockedRegenerate.mockResolvedValue({
       id: 9,
       action: 'rotate',
@@ -99,6 +102,8 @@ describe('MyDbAccessView', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
 
     await waitFor(() => expect(mockedRegenerate).toHaveBeenCalledWith('stele_analyst_me_a1b2'));
-    expect(await screen.findByText(/Regenerating/)).toBeInTheDocument();
+    // The poll surfaces the rotated password and the Reveal button appears.
+    expect(await screen.findByText(/ready — click Reveal/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reveal password' })).toBeInTheDocument();
   });
 });

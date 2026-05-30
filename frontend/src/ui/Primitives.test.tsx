@@ -29,7 +29,9 @@ describe('UI primitives', () => {
   });
 
   it('associates field labels with inputs and renders hints', () => {
-    render(<Field id="email-field" label="Email" hint="Use your work email" placeholder="name@x.com" />);
+    render(
+      <Field id="email-field" label="Email" hint="Use your work email" placeholder="name@x.com" />,
+    );
 
     expect(screen.getByLabelText('Email')).toHaveAttribute('id', 'email-field');
     expect(screen.getByText('Use your work email')).toBeInTheDocument();

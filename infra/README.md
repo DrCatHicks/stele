@@ -116,13 +116,55 @@ it can't reach the private-network Postgres or the in-image entrypoint:
 railway ssh --service web        # drops into a shell in the web container
 ```
 
-## Analyst access, demo seed, secret rotation
+## Connecting to Postgres directly (analysts, reviewers)
 
-External analyst/reviewer database access (the opt-in `enable_postgres_proxy` TCP
-proxy), seeding the initial admin (`seed` entrypoint verb), and rotating the
-generated role passwords (`scripts/rotate_role_password.py` + the
-`*_password_override` variables) are covered in
-`docs/verification/m7.6-demo-to-prod.md`, along with the full demo→prod checklist.
+Railway's Postgres sits on the project's **private network**, so there is no
+public connection string until the opt-in TCP proxy is on. It is **off by
+default** — a standing public 5432 is a deliberate exposure, so flip it on
+while you need access and back off when you're done.
+
+```bash
+# 1. Enable the proxy and apply.
+echo 'enable_postgres_proxy = true' >> terraform.tfvars
+tofu apply
+tofu output postgres_proxy                       # → <host>:<port>
+
+# 2. Grab the role password.
+tofu output -raw stele_analyst_password          # marts (the warehouse)
+tofu output -raw stele_pii_reviewer_password     # pii   (free-text review)
+
+# 3. Connect.
+psql "postgresql://stele_analyst:<password>@<host>:<port>/stele"
+```
+
+Pick the role by what you need to read: `stele_analyst` reaches `marts` only,
+`stele_pii_reviewer` reaches `pii` only — that one-schema-each ceiling is what
+keeps a leaked credential low-stakes (CLAUDE.md *Schemas* table). Both group
+roles are LOGIN and hold the schema grant directly, so no `SET ROLE` step is
+needed.
+
+**Gotchas:**
+
+- Use the plain `postgresql://` driver tag for psql — *not* the
+  `postgresql+psycopg://` tag the app's env vars use (that one's
+  SQLAlchemy-only).
+- Default DB name is `stele` (`variables.tf` `database_name`); check your
+  `terraform.tfvars` if you overrode it.
+- If you're using a **per-user credential** minted by the M3.5 provisioning
+  CLI (a personal NOINHERIT login role), the credential is privilege-less
+  until you `SET ROLE stele_analyst;` (or `…_pii_reviewer`) after connecting,
+  using the one-time password you revealed.
+
+When you're done, set `enable_postgres_proxy = false` and `tofu apply` to close
+the public endpoint.
+
+## Demo seed and secret rotation
+
+Seeding the initial admin (`seed` entrypoint verb), rotating the generated role
+passwords (`scripts/rotate_role_password.py` + the `*_password_override`
+variables), and per-user credential provisioning/revoke are covered in
+`docs/verification/m7.6-demo-to-prod.md`, along with the full demo→prod
+checklist.
 
 ## State holds secrets
 

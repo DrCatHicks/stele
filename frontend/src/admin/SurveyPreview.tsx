@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Model } from 'survey-core';
 import { Survey } from 'survey-react-ui';
 
+import '../surveyInit';
 import { Alert, Button } from '../ui';
 
 interface Snapshot {

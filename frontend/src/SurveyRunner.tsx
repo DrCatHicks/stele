@@ -4,6 +4,7 @@ import { Survey } from 'survey-react-ui';
 
 import { ApiError, fetchSurvey, submitResponse, type SurveyDetail } from './api';
 import { RespondentLayout } from './RespondentLayout';
+import './surveyInit';
 import { Card, CardBody, LoadingState } from './ui';
 
 interface SurveyRunnerProps {

@@ -121,12 +121,20 @@ railway ssh --service web        # drops into a shell in the web container
 Railway's Postgres sits on the project's **private network**, so there is no
 public connection string until the opt-in TCP proxy is on. It is **off by
 default** — a standing public 5432 is a deliberate exposure, so flip it on
-while you need access and back off when you're done.
+while you need access and back off when you're done. Two paths in, by
+audience: the operator shortcut below, or per-user logins for anyone else.
+
+### Operator shortcut (group-role login)
+
+As the deployer you already hold the role passwords (they're in tofu state),
+so the fastest path is logging straight in as the group role. **Don't share
+these** — they're operator-wide secrets with no per-person audit trail; for
+anyone else, mint a per-user login (next subsection).
 
 ```bash
-# 1. Enable the proxy and apply.
-echo 'enable_postgres_proxy = true' >> terraform.tfvars
-tofu apply
+# 1. Enable the proxy for this session — -var keeps it out of tfvars,
+#    so re-running stays idempotent.
+tofu apply -var 'enable_postgres_proxy=true'
 tofu output postgres_proxy                       # → <host>:<port>
 
 # 2. Grab the role password.
@@ -135,28 +143,32 @@ tofu output -raw stele_pii_reviewer_password     # pii   (free-text review)
 
 # 3. Connect.
 psql "postgresql://stele_analyst:<password>@<host>:<port>/stele"
+
+# 4. Close the public endpoint when you're done.
+tofu apply -var 'enable_postgres_proxy=false'
 ```
 
 Pick the role by what you need to read: `stele_analyst` reaches `marts` only,
-`stele_pii_reviewer` reaches `pii` only — that one-schema-each ceiling is what
-keeps a leaked credential low-stakes (CLAUDE.md *Schemas* table). Both group
-roles are LOGIN and hold the schema grant directly, so no `SET ROLE` step is
-needed.
+`stele_pii_reviewer` reaches `pii` only — that one-schema-each ceiling is
+what keeps a leaked credential low-stakes (CLAUDE.md *Schemas* table). Both
+group roles are LOGIN and hold the schema grant directly, so no `SET ROLE`
+step is needed.
 
-**Gotchas:**
+### Per-user logins (for colleagues, auditable, revocable)
+
+Mint a personal NOINHERIT login role with the M3.5 provisioning CLI, deliver
+the one-time password, and they connect to the same proxy host:port. The
+login is privilege-less until they `SET ROLE stele_analyst;` (or
+`…_pii_reviewer`) after connecting. Full provision + revoke flow:
+`docs/verification/m7.6-demo-to-prod.md`.
+
+### Gotchas
 
 - Use the plain `postgresql://` driver tag for psql — *not* the
   `postgresql+psycopg://` tag the app's env vars use (that one's
   SQLAlchemy-only).
 - Default DB name is `stele` (`variables.tf` `database_name`); check your
   `terraform.tfvars` if you overrode it.
-- If you're using a **per-user credential** minted by the M3.5 provisioning
-  CLI (a personal NOINHERIT login role), the credential is privilege-less
-  until you `SET ROLE stele_analyst;` (or `…_pii_reviewer`) after connecting,
-  using the one-time password you revealed.
-
-When you're done, set `enable_postgres_proxy = false` and `tofu apply` to close
-the public endpoint.
 
 ## Demo seed and secret rotation
 

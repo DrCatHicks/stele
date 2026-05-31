@@ -138,24 +138,26 @@ export function GdprView() {
         <EmptyState>No withdrawals recorded.</EmptyState>
       ) : (
         <Card>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs uppercase tracking-wide text-faint">
-                <th className="px-5 py-2 font-medium">Respondent</th>
-                <th className="px-5 py-2 font-medium">Requested</th>
-                <th className="px-5 py-2 font-medium">Reason</th>
-              </tr>
-            </thead>
-            <tbody>
-              {audit.map((w) => (
-                <tr key={w.id} className="border-t border-border">
-                  <td className="px-5 py-2 font-mono text-xs text-muted">{w.respondent_id}</td>
-                  <td className="px-5 py-2 text-muted">{formatDateTime(w.requested_at)}</td>
-                  <td className="px-5 py-2 text-ink">{w.reason ?? '—'}</td>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[36rem] text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-wide text-faint">
+                  <th className="px-5 py-2 font-medium">Respondent</th>
+                  <th className="px-5 py-2 font-medium">Requested</th>
+                  <th className="px-5 py-2 font-medium">Reason</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {audit.map((w) => (
+                  <tr key={w.id} className="border-t border-border">
+                    <td className="px-5 py-2 font-mono text-xs text-muted">{w.respondent_id}</td>
+                    <td className="px-5 py-2 text-muted">{formatDateTime(w.requested_at)}</td>
+                    <td className="px-5 py-2 text-ink">{w.reason ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Card>
       )}
     </section>

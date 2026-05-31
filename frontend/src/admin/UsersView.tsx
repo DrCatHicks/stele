@@ -249,102 +249,104 @@ export function UsersView() {
         <EmptyState>No operators yet.</EmptyState>
       ) : (
         <Card>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs uppercase tracking-wide text-faint">
-                <th className="px-5 py-2 font-medium">Email</th>
-                <th className="px-5 py-2 font-medium">Roles</th>
-                <th className="px-5 py-2 font-medium">Status</th>
-                <th className="px-5 py-2 font-medium">Created</th>
-                <th className="px-5 py-2 font-medium">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u) => (
-                <tr key={u.id} className="border-t border-border align-top">
-                  <td className="px-5 py-3 text-ink">{u.email}</td>
-                  <td className="px-5 py-3">
-                    {editingId === u.id ? (
-                      <RoleCheckboxes
-                        selected={editRoles}
-                        onToggle={(r) => toggle(editRoles, setEditRoles, r)}
-                        idPrefix={`edit-role-${u.id}`}
-                      />
-                    ) : (
-                      <span className="flex flex-wrap gap-1">
-                        {u.roles.map((r) => (
-                          <Badge key={r} tone="brand">
-                            {r}
-                          </Badge>
-                        ))}
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-5 py-3">
-                    <Badge tone={u.disabled ? 'neutral' : 'success'}>
-                      {u.disabled ? 'disabled' : 'active'}
-                    </Badge>
-                  </td>
-                  <td className="px-5 py-3 text-muted">{formatDateTime(u.created_at)}</td>
-                  <td className="px-5 py-3">
-                    <div className="flex flex-wrap gap-2">
-                      {editingId === u.id ? (
-                        <>
-                          <Button
-                            type="button"
-                            size="sm"
-                            onClick={() => handleSaveRoles(u)}
-                            disabled={busy || editRoles.size === 0}
-                          >
-                            Save roles
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => setEditingId(null)}
-                            disabled={busy}
-                          >
-                            Cancel
-                          </Button>
-                        </>
-                      ) : (
-                        <>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="secondary"
-                            onClick={() => startEdit(u)}
-                            disabled={busy}
-                          >
-                            Edit roles
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="secondary"
-                            onClick={() => handleReset(u)}
-                            disabled={busy}
-                          >
-                            Reset password
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant={u.disabled ? 'secondary' : 'danger'}
-                            onClick={() => handleToggleDisabled(u)}
-                            disabled={busy}
-                          >
-                            {u.disabled ? 'Enable' : 'Disable'}
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[44rem] text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-wide text-faint">
+                  <th className="px-5 py-2 font-medium">Email</th>
+                  <th className="px-5 py-2 font-medium">Roles</th>
+                  <th className="px-5 py-2 font-medium">Status</th>
+                  <th className="px-5 py-2 font-medium">Created</th>
+                  <th className="px-5 py-2 font-medium">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {users.map((u) => (
+                  <tr key={u.id} className="border-t border-border align-top">
+                    <td className="px-5 py-3 text-ink">{u.email}</td>
+                    <td className="px-5 py-3">
+                      {editingId === u.id ? (
+                        <RoleCheckboxes
+                          selected={editRoles}
+                          onToggle={(r) => toggle(editRoles, setEditRoles, r)}
+                          idPrefix={`edit-role-${u.id}`}
+                        />
+                      ) : (
+                        <span className="flex flex-wrap gap-1">
+                          {u.roles.map((r) => (
+                            <Badge key={r} tone="brand">
+                              {r}
+                            </Badge>
+                          ))}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-5 py-3">
+                      <Badge tone={u.disabled ? 'neutral' : 'success'}>
+                        {u.disabled ? 'disabled' : 'active'}
+                      </Badge>
+                    </td>
+                    <td className="px-5 py-3 text-muted">{formatDateTime(u.created_at)}</td>
+                    <td className="px-5 py-3">
+                      <div className="flex flex-wrap gap-2">
+                        {editingId === u.id ? (
+                          <>
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => handleSaveRoles(u)}
+                              disabled={busy || editRoles.size === 0}
+                            >
+                              Save roles
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setEditingId(null)}
+                              disabled={busy}
+                            >
+                              Cancel
+                            </Button>
+                          </>
+                        ) : (
+                          <>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => startEdit(u)}
+                              disabled={busy}
+                            >
+                              Edit roles
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => handleReset(u)}
+                              disabled={busy}
+                            >
+                              Reset password
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant={u.disabled ? 'secondary' : 'danger'}
+                              onClick={() => handleToggleDisabled(u)}
+                              disabled={busy}
+                            >
+                              {u.disabled ? 'Enable' : 'Disable'}
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Card>
       )}
     </section>

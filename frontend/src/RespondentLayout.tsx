@@ -8,10 +8,10 @@ import type { ReactNode } from 'react';
 export function RespondentLayout({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen">
-      <header className="border-b border-border bg-surface px-6 py-3">
+      <header className="border-b border-border bg-surface px-4 py-3 sm:px-6">
         <span className="text-base font-semibold text-brand-dark">Stele</span>
       </header>
-      <main className="mx-auto max-w-2xl px-4 py-10">{children}</main>
+      <main className="mx-auto max-w-2xl px-4 py-6 sm:py-10">{children}</main>
     </div>
   );
 }

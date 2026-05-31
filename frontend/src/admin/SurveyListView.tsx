@@ -236,40 +236,42 @@ function SurveyCard({ versions }: { versions: SurveySummary[] }) {
           <Alert tone="error">{error}</Alert>
         </div>
       ) : null}
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-left text-xs uppercase tracking-wide text-faint">
-            <th className="px-5 py-2 font-medium">Version</th>
-            <th className="px-5 py-2 font-medium">Status</th>
-            <th className="px-5 py-2 font-medium">Responses</th>
-            <th className="px-5 py-2 font-medium">Published</th>
-            <th className="px-5 py-2" />
-          </tr>
-        </thead>
-        <tbody>
-          {versions.map((v) => (
-            <tr key={v.version} className="border-t border-border">
-              <td className="px-5 py-2 font-medium text-ink">v{v.version}</td>
-              <td className="px-5 py-2">
-                <Badge tone={statusTone(v.status)}>{v.status}</Badge>
-              </td>
-              <td className="px-5 py-2 text-muted">{v.response_count}</td>
-              <td className="px-5 py-2 text-muted">
-                {v.published_at ? formatDate(v.published_at) : '—'}
-              </td>
-              <td className="px-5 py-2 text-right">
-                <Link
-                  to={`/admin/surveys/${v.survey_id}/versions/${v.version}`}
-                  aria-label={`Open ${v.survey_id} v${v.version}`}
-                  className="font-medium text-brand-dark hover:underline"
-                >
-                  Open
-                </Link>
-              </td>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[32rem] text-sm">
+          <thead>
+            <tr className="text-left text-xs uppercase tracking-wide text-faint">
+              <th className="px-5 py-2 font-medium">Version</th>
+              <th className="px-5 py-2 font-medium">Status</th>
+              <th className="px-5 py-2 font-medium">Responses</th>
+              <th className="px-5 py-2 font-medium">Published</th>
+              <th className="px-5 py-2" />
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {versions.map((v) => (
+              <tr key={v.version} className="border-t border-border">
+                <td className="px-5 py-2 font-medium text-ink">v{v.version}</td>
+                <td className="px-5 py-2">
+                  <Badge tone={statusTone(v.status)}>{v.status}</Badge>
+                </td>
+                <td className="px-5 py-2 text-muted">{v.response_count}</td>
+                <td className="px-5 py-2 text-muted">
+                  {v.published_at ? formatDate(v.published_at) : '—'}
+                </td>
+                <td className="px-5 py-2 text-right">
+                  <Link
+                    to={`/admin/surveys/${v.survey_id}/versions/${v.version}`}
+                    aria-label={`Open ${v.survey_id} v${v.version}`}
+                    className="font-medium text-brand-dark hover:underline"
+                  >
+                    Open
+                  </Link>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </Card>
   );
 }

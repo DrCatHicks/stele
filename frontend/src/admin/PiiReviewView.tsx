@@ -132,72 +132,74 @@ export function PiiReviewView() {
         <EmptyState>No {status} answers.</EmptyState>
       ) : (
         <Card>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs uppercase tracking-wide text-faint">
-                <th className="px-5 py-2 font-medium">Respondent</th>
-                <th className="px-5 py-2 font-medium">Question</th>
-                <th className="px-5 py-2 font-medium">Answer</th>
-                <th className="px-5 py-2 font-medium">Submitted</th>
-                <th className="px-5 py-2 font-medium">
-                  {status === 'pending' ? 'Decision' : 'Status'}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((item) => (
-                <tr key={item.id} className="border-t border-border align-top">
-                  <td className="px-5 py-3 font-mono text-xs text-muted">{item.respondent_id}</td>
-                  <td className="px-5 py-3 text-ink">{item.question_name}</td>
-                  <td className="px-5 py-3 text-ink">{item.value_text ?? '—'}</td>
-                  <td className="px-5 py-3 text-muted">{formatDate(item.created_at)}</td>
-                  <td className="px-5 py-3">
-                    {status === 'scrubbed' ? (
-                      <Badge tone={statusTone('scrubbed')}>scrubbed</Badge>
-                    ) : (
-                      <div className="flex flex-wrap items-center gap-2">
-                        {status === 'pending' ? (
-                          <>
-                            <Button
-                              type="button"
-                              size="sm"
-                              onClick={() => decide(item.id, 'promote')}
-                              disabled={busyId === item.id}
-                            >
-                              Promote
-                            </Button>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="danger"
-                              onClick={() => decide(item.id, 'reject')}
-                              disabled={busyId === item.id}
-                            >
-                              Reject
-                            </Button>
-                          </>
-                        ) : (
-                          <Badge tone={statusTone(status)}>{status}</Badge>
-                        )}
-                        {/* Scrub stays available on pending/promoted/rejected: the
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[48rem] text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-wide text-faint">
+                  <th className="px-5 py-2 font-medium">Respondent</th>
+                  <th className="px-5 py-2 font-medium">Question</th>
+                  <th className="px-5 py-2 font-medium">Answer</th>
+                  <th className="px-5 py-2 font-medium">Submitted</th>
+                  <th className="px-5 py-2 font-medium">
+                    {status === 'pending' ? 'Decision' : 'Status'}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((item) => (
+                  <tr key={item.id} className="border-t border-border align-top">
+                    <td className="px-5 py-3 font-mono text-xs text-muted">{item.respondent_id}</td>
+                    <td className="px-5 py-3 text-ink">{item.question_name}</td>
+                    <td className="px-5 py-3 text-ink">{item.value_text ?? '—'}</td>
+                    <td className="px-5 py-3 text-muted">{formatDate(item.created_at)}</td>
+                    <td className="px-5 py-3">
+                      {status === 'scrubbed' ? (
+                        <Badge tone={statusTone('scrubbed')}>scrubbed</Badge>
+                      ) : (
+                        <div className="flex flex-wrap items-center gap-2">
+                          {status === 'pending' ? (
+                            <>
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={() => decide(item.id, 'promote')}
+                                disabled={busyId === item.id}
+                              >
+                                Promote
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="danger"
+                                onClick={() => decide(item.id, 'reject')}
+                                disabled={busyId === item.id}
+                              >
+                                Reject
+                              </Button>
+                            </>
+                          ) : (
+                            <Badge tone={statusTone(status)}>{status}</Badge>
+                          )}
+                          {/* Scrub stays available on pending/promoted/rejected: the
                             PII persists in storage until it is scrubbed, whatever
                             the review decision. */}
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="danger"
-                          onClick={() => scrub(item)}
-                          disabled={busyId === item.id}
-                        >
-                          Scrub
-                        </Button>
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="danger"
+                            onClick={() => scrub(item)}
+                            disabled={busyId === item.id}
+                          >
+                            Scrub
+                          </Button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Card>
       )}
     </section>

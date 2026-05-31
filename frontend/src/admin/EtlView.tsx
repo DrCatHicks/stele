@@ -178,65 +178,67 @@ export function EtlView() {
         <EmptyState>No ETL runs yet.</EmptyState>
       ) : (
         <Card>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs uppercase tracking-wide text-faint">
-                <th className="px-5 py-2 font-medium">Status</th>
-                <th className="px-5 py-2 font-medium">Started</th>
-                <th className="px-5 py-2 font-medium">Elapsed</th>
-                <th className="px-5 py-2 font-medium">Sources → marts</th>
-                <th className="px-5 py-2 font-medium">Version</th>
-              </tr>
-            </thead>
-            <tbody>
-              {runs.map((run) => {
-                const sources = total(run.source_row_counts);
-                const marts = total(run.mart_row_counts);
-                return (
-                  <tr key={run.run_id} className="border-t border-border align-top">
-                    <td className="px-5 py-2">
-                      <Badge tone={run.interrupted ? 'danger' : statusTone(run.status)}>
-                        {run.interrupted ? 'interrupted' : run.status}
-                      </Badge>
-                      {run.interrupted ? (
-                        <div className="mt-1 flex items-center gap-2 text-xs text-muted">
-                          <span>Likely stopped by a restart.</span>
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => handleClear(run.run_id)}
-                            disabled={clearingId === run.run_id}
-                          >
-                            {clearingId === run.run_id ? 'Clearing…' : 'Clear'}
-                          </Button>
-                        </div>
-                      ) : null}
-                      {run.failures.length > 0 ? (
-                        <ul className="mt-1 list-none space-y-0.5 text-xs text-danger">
-                          {run.failures.map((f, i) => (
-                            <li key={f.unique_id ?? i}>
-                              <span className="font-mono">{f.unique_id ?? '?'}</span>
-                              {f.message ? `: ${f.message}` : null}
-                            </li>
-                          ))}
-                        </ul>
-                      ) : null}
-                    </td>
-                    <td className="px-5 py-2 text-muted">{formatDateTime(run.started_at)}</td>
-                    <td className="px-5 py-2 text-muted">{elapsed(run)}</td>
-                    <td className="px-5 py-2 text-muted">
-                      {sources ?? '—'} → {marts ?? '—'}
-                    </td>
-                    <td className="px-5 py-2 font-mono text-xs text-muted">
-                      {run.dbt_version ?? '—'}
-                      {run.git_sha ? ` @ ${run.git_sha.slice(0, 7)}` : ''}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[44rem] text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-wide text-faint">
+                  <th className="px-5 py-2 font-medium">Status</th>
+                  <th className="px-5 py-2 font-medium">Started</th>
+                  <th className="px-5 py-2 font-medium">Elapsed</th>
+                  <th className="px-5 py-2 font-medium">Sources → marts</th>
+                  <th className="px-5 py-2 font-medium">Version</th>
+                </tr>
+              </thead>
+              <tbody>
+                {runs.map((run) => {
+                  const sources = total(run.source_row_counts);
+                  const marts = total(run.mart_row_counts);
+                  return (
+                    <tr key={run.run_id} className="border-t border-border align-top">
+                      <td className="px-5 py-2">
+                        <Badge tone={run.interrupted ? 'danger' : statusTone(run.status)}>
+                          {run.interrupted ? 'interrupted' : run.status}
+                        </Badge>
+                        {run.interrupted ? (
+                          <div className="mt-1 flex items-center gap-2 text-xs text-muted">
+                            <span>Likely stopped by a restart.</span>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => handleClear(run.run_id)}
+                              disabled={clearingId === run.run_id}
+                            >
+                              {clearingId === run.run_id ? 'Clearing…' : 'Clear'}
+                            </Button>
+                          </div>
+                        ) : null}
+                        {run.failures.length > 0 ? (
+                          <ul className="mt-1 list-none space-y-0.5 text-xs text-danger">
+                            {run.failures.map((f, i) => (
+                              <li key={f.unique_id ?? i}>
+                                <span className="font-mono">{f.unique_id ?? '?'}</span>
+                                {f.message ? `: ${f.message}` : null}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </td>
+                      <td className="px-5 py-2 text-muted">{formatDateTime(run.started_at)}</td>
+                      <td className="px-5 py-2 text-muted">{elapsed(run)}</td>
+                      <td className="px-5 py-2 text-muted">
+                        {sources ?? '—'} → {marts ?? '—'}
+                      </td>
+                      <td className="px-5 py-2 font-mono text-xs text-muted">
+                        {run.dbt_version ?? '—'}
+                        {run.git_sha ? ` @ ${run.git_sha.slice(0, 7)}` : ''}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </Card>
       )}
     </section>

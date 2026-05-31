@@ -222,33 +222,35 @@ export function DbCredentialsView() {
         <>
           <h2 className="mb-2 mt-6 text-sm font-semibold text-ink">Recent requests</h2>
           <Card className="mb-6">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs uppercase tracking-wide text-faint">
-                  <th className="px-5 py-2 font-medium">Action</th>
-                  <th className="px-5 py-2 font-medium">Subject / role</th>
-                  <th className="px-5 py-2 font-medium">Status</th>
-                  <th className="px-5 py-2 font-medium">Detail</th>
-                </tr>
-              </thead>
-              <tbody>
-                {requests.map((r) => (
-                  <tr key={r.id} className="border-t border-border">
-                    <td className="px-5 py-2 text-ink">
-                      {r.action}
-                      {r.access ? ` (${r.access})` : ''}
-                    </td>
-                    <td className="px-5 py-2 font-mono text-xs text-muted">
-                      {r.subject_label ?? r.login_role ?? '—'}
-                    </td>
-                    <td className="px-5 py-2">
-                      <Badge tone={requestTone(r.status)}>{r.status}</Badge>
-                    </td>
-                    <td className="px-5 py-2 text-muted">{r.error_detail ?? '—'}</td>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[40rem] text-sm">
+                <thead>
+                  <tr className="text-left text-xs uppercase tracking-wide text-faint">
+                    <th className="px-5 py-2 font-medium">Action</th>
+                    <th className="px-5 py-2 font-medium">Subject / role</th>
+                    <th className="px-5 py-2 font-medium">Status</th>
+                    <th className="px-5 py-2 font-medium">Detail</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {requests.map((r) => (
+                    <tr key={r.id} className="border-t border-border">
+                      <td className="px-5 py-2 text-ink">
+                        {r.action}
+                        {r.access ? ` (${r.access})` : ''}
+                      </td>
+                      <td className="px-5 py-2 font-mono text-xs text-muted">
+                        {r.subject_label ?? r.login_role ?? '—'}
+                      </td>
+                      <td className="px-5 py-2">
+                        <Badge tone={requestTone(r.status)}>{r.status}</Badge>
+                      </td>
+                      <td className="px-5 py-2 text-muted">{r.error_detail ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </Card>
         </>
       ) : null}
@@ -262,48 +264,50 @@ export function DbCredentialsView() {
         <EmptyState>No DB credentials provisioned.</EmptyState>
       ) : (
         <Card>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs uppercase tracking-wide text-faint">
-                <th className="px-5 py-2 font-medium">Subject</th>
-                <th className="px-5 py-2 font-medium">Access</th>
-                <th className="px-5 py-2 font-medium">Login role</th>
-                <th className="px-5 py-2 font-medium">Status</th>
-                <th className="px-5 py-2 font-medium">Created</th>
-                <th className="px-5 py-2 font-medium">Revoked</th>
-                <th className="px-5 py-2 font-medium">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {grants.map((g) => (
-                <tr key={g.id} className="border-t border-border">
-                  <td className="px-5 py-2 text-ink">{g.subject_label}</td>
-                  <td className="px-5 py-2 text-muted">{g.access}</td>
-                  <td className="px-5 py-2 font-mono text-xs text-muted">{g.login_role}</td>
-                  <td className="px-5 py-2">
-                    <Badge tone={g.status === 'active' ? 'success' : 'neutral'}>{g.status}</Badge>
-                  </td>
-                  <td className="px-5 py-2 text-muted">{formatDateTime(g.created_at)}</td>
-                  <td className="px-5 py-2 text-muted">
-                    {g.revoked_at ? formatDateTime(g.revoked_at) : '—'}
-                  </td>
-                  <td className="px-5 py-2">
-                    {g.status === 'active' ? (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="danger"
-                        onClick={() => handleRevoke(g.login_role)}
-                        disabled={busy}
-                      >
-                        Revoke
-                      </Button>
-                    ) : null}
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[56rem] text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-wide text-faint">
+                  <th className="px-5 py-2 font-medium">Subject</th>
+                  <th className="px-5 py-2 font-medium">Access</th>
+                  <th className="px-5 py-2 font-medium">Login role</th>
+                  <th className="px-5 py-2 font-medium">Status</th>
+                  <th className="px-5 py-2 font-medium">Created</th>
+                  <th className="px-5 py-2 font-medium">Revoked</th>
+                  <th className="px-5 py-2 font-medium">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {grants.map((g) => (
+                  <tr key={g.id} className="border-t border-border">
+                    <td className="px-5 py-2 text-ink">{g.subject_label}</td>
+                    <td className="px-5 py-2 text-muted">{g.access}</td>
+                    <td className="px-5 py-2 font-mono text-xs text-muted">{g.login_role}</td>
+                    <td className="px-5 py-2">
+                      <Badge tone={g.status === 'active' ? 'success' : 'neutral'}>{g.status}</Badge>
+                    </td>
+                    <td className="px-5 py-2 text-muted">{formatDateTime(g.created_at)}</td>
+                    <td className="px-5 py-2 text-muted">
+                      {g.revoked_at ? formatDateTime(g.revoked_at) : '—'}
+                    </td>
+                    <td className="px-5 py-2">
+                      {g.status === 'active' ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="danger"
+                          onClick={() => handleRevoke(g.login_role)}
+                          disabled={busy}
+                        >
+                          Revoke
+                        </Button>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Card>
       )}
     </section>

@@ -140,54 +140,56 @@ export function MyDbAccessView() {
         </EmptyState>
       ) : (
         <Card>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs uppercase tracking-wide text-faint">
-                <th className="px-5 py-2 font-medium">Login role</th>
-                <th className="px-5 py-2 font-medium">Access</th>
-                <th className="px-5 py-2 font-medium">Status</th>
-                <th className="px-5 py-2 font-medium">Granted</th>
-                <th className="px-5 py-2 font-medium">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {creds.map((c) => (
-                <tr key={c.login_role} className="border-t border-border">
-                  <td className="px-5 py-2 font-mono text-xs text-ink">{c.login_role}</td>
-                  <td className="px-5 py-2 text-muted">{c.access}</td>
-                  <td className="px-5 py-2">
-                    <Badge tone={c.status === 'active' ? 'success' : 'neutral'}>{c.status}</Badge>
-                  </td>
-                  <td className="px-5 py-2 text-muted">{formatDateTime(c.created_at)}</td>
-                  <td className="px-5 py-2">
-                    <div className="flex flex-wrap gap-2">
-                      {c.has_pending_secret ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => handleReveal(c.login_role)}
-                          disabled={busy}
-                        >
-                          Reveal password
-                        </Button>
-                      ) : null}
-                      {c.status === 'active' ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => handleRegenerate(c.login_role)}
-                          disabled={busy}
-                        >
-                          Regenerate
-                        </Button>
-                      ) : null}
-                    </div>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[40rem] text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-wide text-faint">
+                  <th className="px-5 py-2 font-medium">Login role</th>
+                  <th className="px-5 py-2 font-medium">Access</th>
+                  <th className="px-5 py-2 font-medium">Status</th>
+                  <th className="px-5 py-2 font-medium">Granted</th>
+                  <th className="px-5 py-2 font-medium">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {creds.map((c) => (
+                  <tr key={c.login_role} className="border-t border-border">
+                    <td className="px-5 py-2 font-mono text-xs text-ink">{c.login_role}</td>
+                    <td className="px-5 py-2 text-muted">{c.access}</td>
+                    <td className="px-5 py-2">
+                      <Badge tone={c.status === 'active' ? 'success' : 'neutral'}>{c.status}</Badge>
+                    </td>
+                    <td className="px-5 py-2 text-muted">{formatDateTime(c.created_at)}</td>
+                    <td className="px-5 py-2">
+                      <div className="flex flex-wrap gap-2">
+                        {c.has_pending_secret ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => handleReveal(c.login_role)}
+                            disabled={busy}
+                          >
+                            Reveal password
+                          </Button>
+                        ) : null}
+                        {c.status === 'active' ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => handleRegenerate(c.login_role)}
+                            disabled={busy}
+                          >
+                            Regenerate
+                          </Button>
+                        ) : null}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Card>
       )}
     </section>

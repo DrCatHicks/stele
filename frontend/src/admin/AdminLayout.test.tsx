@@ -114,4 +114,48 @@ describe('AdminLayout', () => {
     expect(screen.queryByRole('link', { name: 'DB Credentials' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'PII Review' })).not.toBeInTheDocument();
   });
+
+  // The desktop nav doesn't fit on small viewports alongside the user/logout
+  // block, so we collapse it behind a hamburger button (issue #48). jsdom
+  // doesn't apply Tailwind's responsive CSS, so we can't assert visibility, but
+  // we can assert the collapsed-menu DOM contract: button toggles the drawer
+  // and the drawer mirrors the nav + logout.
+  it('exposes a hamburger that opens a mirror nav drawer', async () => {
+    asRole('admin');
+    renderLayout();
+    await screen.findByTestId('current-user');
+
+    const toggle = screen.getByRole('button', { name: 'Open menu' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByTestId('current-user-mobile')).not.toBeInTheDocument();
+
+    await userEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(toggle).toHaveAccessibleName('Close menu');
+    // Drawer renders its own user block and a second copy of every nav link.
+    expect(screen.getByTestId('current-user-mobile')).toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: 'Surveys' })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: 'Log out' })).toHaveLength(2);
+  });
+
+  it('closes the drawer when a nav link is clicked', async () => {
+    asRole('admin');
+    renderLayout();
+    await screen.findByTestId('current-user');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open menu' }));
+    expect(screen.getByTestId('current-user-mobile')).toBeInTheDocument();
+
+    // Click the drawer copy of the Surveys link. Both copies route to the same
+    // place; either close path is fine, but tapping a link is the common one.
+    const surveysLinks = screen.getAllByRole('link', { name: 'Surveys' });
+    await userEvent.click(surveysLinks[surveysLinks.length - 1]!);
+
+    expect(screen.queryByTestId('current-user-mobile')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open menu' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+  });
 });

@@ -16,9 +16,12 @@
 -- is item N of a reusable scale (e.g. PHQ-9). They are NOT a pooling key:
 -- analytical pooling across surveys remains the parent_question_id opt-in
 -- (invariant 5). Authored at definition time and read straight from the
--- snapshot — no heuristic or auto-derivation — and aggregated with min() across
--- versions like pii_risk; the construct_pair_integrity singular test pins that
--- a populated item is always backed by a block.
+-- snapshot — no heuristic or auto-derivation. min() is a deterministic
+-- tie-break across versions, NOT a safe-direction default like pii_risk: a tag
+-- divergence (v1 says phq9_q1, v2 says gad7_q1) is methodologically the same
+-- event as a rename and is surfaced by the construct_tag_stability singular
+-- test rather than silently collapsed here. construct_pair_integrity backstops
+-- that a populated item always carries a backing block.
 
 select
     {{ surrogate_key(['survey_id', 'stable_name']) }} as question_id,

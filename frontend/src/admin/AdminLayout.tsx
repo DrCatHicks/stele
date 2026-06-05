@@ -9,7 +9,9 @@ import { Button } from '../ui';
  *
  * Below `lg` (1024px) the full nav can't fit alongside the user/logout block
  * for an admin, so we collapse it behind a hamburger that opens a stacked
- * drawer underneath the header. Above `lg` the drawer never renders. */
+ * drawer underneath the header. Above `lg` the drawer is hidden via CSS
+ * (`lg:hidden`) but may still be in the DOM if it was opened on a narrow
+ * viewport before the window was resized. */
 export function AdminLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -96,7 +98,7 @@ export function AdminLayout() {
                 aria-expanded={menuOpen}
                 aria-controls="admin-mobile-menu"
                 onClick={() => setMenuOpen((open) => !open)}
-                className="-mr-1 rounded-md p-2 text-ink hover:bg-canvas lg:hidden"
+                className="-mr-1 rounded-md p-2 text-ink hover:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand lg:hidden"
               >
                 <MenuIcon open={menuOpen} />
               </button>

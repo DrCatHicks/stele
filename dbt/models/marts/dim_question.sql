@@ -11,6 +11,14 @@
 -- parent_question_id / parent_question_rationale capture cross-version
 -- equivalence. They are NEVER auto-populated (invariant 5) — that is a
 -- researcher judgment — so both are emitted as explicit nulls here.
+--
+-- construct_block / construct_item carry authored *provenance* — this question
+-- is item N of a reusable scale (e.g. PHQ-9). They are NOT a pooling key:
+-- analytical pooling across surveys remains the parent_question_id opt-in
+-- (invariant 5). Authored at definition time and read straight from the
+-- snapshot — no heuristic or auto-derivation — and aggregated with min() across
+-- versions like pii_risk; the construct_pair_integrity singular test pins that
+-- a populated item is always backed by a block.
 
 select
     {{ surrogate_key(['survey_id', 'stable_name']) }} as question_id,
@@ -32,6 +40,8 @@ select
     -- resolve was_shown against (a cell is shown iff its panel is); null for a
     -- plain or matrix question. Deterministic per stable_name.
     min(panel_name) as panel_name,
+    min(construct_block) as construct_block,
+    min(construct_item) as construct_item,
     cast(null as text) as parent_question_id,
     cast(null as text) as parent_question_rationale
 from {{ ref('int_survey_questions') }}

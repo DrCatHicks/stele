@@ -734,6 +734,50 @@ def test_construct_item_on_matrix_row_without_block_rejected() -> None:
         validate_definition(definition)
 
 
+def test_construct_block_on_matrixdropdown_column_rejected() -> None:
+    # int_survey_questions reads construct_* from rows only — a column-level tag
+    # would be silently dropped by the warehouse. Reject loudly.
+    definition = _def(
+        {
+            "type": "matrixdropdown",
+            "name": "md1",
+            "construct_block": "phq9",
+            "rows": [{"value": "r1", "construct_item": "phq9_q1"}],
+            "columns": [
+                {
+                    "name": "brand",
+                    "cellType": "dropdown",
+                    "choices": ["a", "b"],
+                    "construct_block": "gad7",  # the bug
+                }
+            ],
+        }
+    )
+    with pytest.raises(InvalidDefinition, match="construct_block on a matrixdropdown column"):
+        validate_definition(definition)
+
+
+def test_construct_item_on_matrixdropdown_column_rejected() -> None:
+    definition = _def(
+        {
+            "type": "matrixdropdown",
+            "name": "md1",
+            "construct_block": "phq9",
+            "rows": [{"value": "r1"}],
+            "columns": [
+                {
+                    "name": "brand",
+                    "cellType": "dropdown",
+                    "choices": ["a", "b"],
+                    "construct_item": "phq9_q1",  # the bug
+                }
+            ],
+        }
+    )
+    with pytest.raises(InvalidDefinition, match="construct_item on a matrixdropdown column"):
+        validate_definition(definition)
+
+
 def test_construct_block_on_row_overrides_matrix() -> None:
     # A row may carry its own block — the leaf wins over the container.
     definition = _def(

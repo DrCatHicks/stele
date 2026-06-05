@@ -626,6 +626,23 @@ def _validate_construct_tags(definition: dict[str, Any]) -> None:
                         f"question {row_label!r}: construct_item set but no construct_block "
                         "in scope (set it on the row or the matrix)"
                     )
+            # matrixdropdown columns: a (row, col) cell's construct identity is the
+            # row's (int_survey_questions only reads construct_* from rows), so a
+            # column-level tag is silently dropped by the warehouse. Reject loudly
+            # rather than allow silent data loss — per-column item tagging is a
+            # future extension if we ever need different items per row dimension.
+            if element.get("type") == "matrixdropdown":
+                for column in element.get("columns", []) or []:
+                    if not isinstance(column, dict):
+                        continue
+                    col_label = f"{name}.<col {column.get('name', '?')}>"
+                    for key in ("construct_block", "construct_item"):
+                        if column.get(key) is not None:
+                            raise InvalidDefinition(
+                                f"question {col_label!r}: {key} on a matrixdropdown "
+                                "column is not supported — tag the row instead (a "
+                                "cell's construct identity is its row's)"
+                            )
         elif qtype in REPEATING_TYPES:
             if isinstance(owner_item, str):
                 raise InvalidDefinition(

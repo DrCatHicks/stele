@@ -653,6 +653,156 @@ def test_enable_if_dangling_reference_rejected() -> None:
         validate_definition(definition)
 
 
+# --- construct tags ----------------------------------------------------------
+# construct_block / construct_item are optional authored *provenance* tags
+# (this question is item N of a reusable scale). They are NOT pooling — that
+# stays the parent_question_id opt-in (invariant 5). Publish-time validation
+# guards shape and the block/item co-occurrence; the dbt construct_pair_integrity
+# test backstops the warehouse-side invariant.
+
+
+def test_construct_tags_on_plain_question_pass() -> None:
+    validate_definition(_def(_radio("q1", construct_block="phq9", construct_item="phq9_q1")))
+
+
+def test_construct_block_alone_passes() -> None:
+    # A block without an item is fine (e.g. "this question is from PHQ-9 but
+    # I haven't pinned the item id yet"); only construct_item demands a block.
+    validate_definition(_def(_radio("q1", construct_block="phq9")))
+
+
+def test_construct_item_without_block_rejected() -> None:
+    with pytest.raises(InvalidDefinition, match="construct_item set without construct_block"):
+        validate_definition(_def(_radio("q1", construct_item="phq9_q1")))
+
+
+def test_construct_block_must_be_string() -> None:
+    with pytest.raises(InvalidDefinition, match="construct_block must be a non-empty string"):
+        validate_definition(_def(_radio("q1", construct_block=42)))
+
+
+def test_construct_item_empty_string_rejected() -> None:
+    with pytest.raises(InvalidDefinition, match="construct_item must be a non-empty string"):
+        validate_definition(_def(_radio("q1", construct_block="phq9", construct_item="   ")))
+
+
+def test_construct_tags_on_matrix_inheritance_pass() -> None:
+    # Authored canonical pattern for a scale-in-a-matrix: block on the matrix,
+    # item on each row. Row inherits the matrix's block.
+    definition = _def(
+        {
+            "type": "matrix",
+            "name": "phq9",
+            "construct_block": "phq9",
+            "rows": [
+                {"value": "q1", "text": "Little interest", "construct_item": "phq9_q1"},
+                {"value": "q2", "text": "Down or hopeless", "construct_item": "phq9_q2"},
+            ],
+            "columns": ["0", "1", "2", "3"],
+        }
+    )
+    validate_definition(definition)
+
+
+def test_construct_item_on_matrix_container_rejected() -> None:
+    # A matrix groups items; it doesn't *have* an item — that's a row's job.
+    definition = _def(
+        {
+            "type": "matrix",
+            "name": "m1",
+            "construct_block": "phq9",
+            "construct_item": "phq9_q1",  # the bug
+            "rows": ["r1"],
+            "columns": ["c1"],
+        }
+    )
+    with pytest.raises(InvalidDefinition, match="construct_item belongs to a matrix row"):
+        validate_definition(definition)
+
+
+def test_construct_item_on_matrix_row_without_block_rejected() -> None:
+    # Row carries an item, but neither the row nor the matrix gives a block.
+    definition = _def(
+        {
+            "type": "matrix",
+            "name": "m1",
+            "rows": [{"value": "r1", "construct_item": "phq9_q1"}],
+            "columns": ["c1"],
+        }
+    )
+    with pytest.raises(InvalidDefinition, match="no construct_block in scope"):
+        validate_definition(definition)
+
+
+def test_construct_block_on_row_overrides_matrix() -> None:
+    # A row may carry its own block — the leaf wins over the container.
+    definition = _def(
+        {
+            "type": "matrix",
+            "name": "m1",
+            "construct_block": "phq9",
+            "rows": [{"value": "r1", "construct_block": "gad7", "construct_item": "gad7_q1"}],
+            "columns": ["c1"],
+        }
+    )
+    validate_definition(definition)
+
+
+def test_construct_tags_on_paneldynamic_inheritance_pass() -> None:
+    # Mirror of the matrix story: block on the panel, item on each template cell.
+    definition = _def(
+        {
+            "type": "paneldynamic",
+            "name": "screener",
+            "construct_block": "phq9",
+            "templateElements": [
+                {
+                    "type": "dropdown",
+                    "name": "q1",
+                    "choices": ["0", "1", "2", "3"],
+                    "construct_item": "phq9_q1",
+                }
+            ],
+        }
+    )
+    validate_definition(definition)
+
+
+def test_construct_item_on_panel_container_rejected() -> None:
+    definition = _def(
+        {
+            "type": "paneldynamic",
+            "name": "screener",
+            "construct_block": "phq9",
+            "construct_item": "phq9_q1",  # belongs on a template element
+            "templateElements": [{"type": "dropdown", "name": "q1", "choices": ["a", "b"]}],
+        }
+    )
+    with pytest.raises(
+        InvalidDefinition, match="construct_item belongs to a paneldynamic template"
+    ):
+        validate_definition(definition)
+
+
+def test_construct_item_on_panel_cell_without_block_rejected() -> None:
+    definition = _def(
+        {
+            "type": "paneldynamic",
+            "name": "screener",
+            "templateElements": [
+                {
+                    "type": "dropdown",
+                    "name": "q1",
+                    "choices": ["a", "b"],
+                    "construct_item": "phq9_q1",
+                }
+            ],
+        }
+    )
+    with pytest.raises(InvalidDefinition, match="no construct_block in scope"):
+        validate_definition(definition)
+
+
 # --- endpoint wiring + detail surfacing --------------------------------------
 
 

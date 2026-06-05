@@ -285,6 +285,8 @@ erDiagram
         text question_type
         bigint parent_question_id FK
         text parent_question_rationale
+        text construct_block
+        text construct_item
         timestamptz first_published_at
     }
     dim_question_version {
@@ -356,6 +358,21 @@ COALESCE(parent_question_id, question_id) AS canonical_question_id
 ```
 
 Analysts wanting strict per-version behavior group by `question_version_id`; same-named questions already share a `question_id` across a survey's versions. To *additionally* pool across a rename (or a cross-instrument equivalence), opt in by using `canonical_question_id` — the moment of friction that prompts checking the rationale and confirming pooling is appropriate.
+
+#### Construct membership
+
+Two optional text columns on `dim_question` record that a question came from a reusable, named scale (PHQ-9, GAD-7, eNPS, …):
+
+| Column | Notes |
+|---|---|
+| `construct_block` | Identifier of the scale this question belongs to. Authored as a custom JSON attribute on the question (or inherited from its matrix / paneldynamic container — see below). Null when the author has not tagged the question. |
+| `construct_item` | Identifier of this question's position within its block (e.g. `phq9_q3`). Always paired with a `construct_block`; the `construct_pair_integrity` singular test enforces this. Leaf-only — set on a plain question, a matrix row, or a paneldynamic template element, never on the container that groups them. |
+
+Both are **provenance**, not a pooling key. Two questions sharing a `construct_block` does not license `GROUP BY construct_block` for pooled analysis — that is still a deliberate methodological judgment expressed via `parent_question_id` (see "Cross-version equivalence" above and §4.8). The separation is intentional: a researcher may want to tag a survey as containing PHQ-9 items without committing, at definition time, to pooling those items with another survey's PHQ-9 items in analysis. The tags surface the relationship; the pooling decision stays explicit per invariant 5.
+
+Inheritance rule for the composite types: a `construct_block` on a matrix or paneldynamic container is inherited by each of its leaf sub-questions (rows / template elements); a leaf may override with its own `construct_block`. `construct_item` never inherits — it identifies the leaf and a container has no item identity of its own.
+
+The columns live on `dim_question` (the stable abstraction), not `dim_question_version`, because construct membership — like cross-version equivalence above — is about the question as a construct, not about a specific rendering of it.
 
 #### Indexes
 
@@ -546,6 +563,10 @@ Analyst and reviewer *data* access is not mediated by the application. Analysts 
 
 **Rejected.** GDPR right-to-erasure requires content deletion, not just hiding. The tombstoning workflow nulls content while preserving the audit row, satisfying both obligations.
 
+### 4.10 Treating construct_block as an analytical pooling key
+
+**Rejected.** A `construct_block` tag declares provenance ("this question is part of the PHQ-9 instrument"); it does not declare that two tagged questions are analytically equivalent. Reusable scales are sometimes administered with subtle changes — translated wording, response-scale anchor edits, dropped items — that a researcher may or may not be willing to pool across. Treating shared `construct_block` as automatic pooling would re-introduce the silent-default failure mode invariant 5 was designed to prevent (see §4.8). Pooling stays the `parent_question_id` opt-in; `construct_block` is metadata that helps a researcher *find* the questions that might be candidates for that judgment, not a substitute for making it.
+
 ---
 
 ## 5. Deferred decisions
@@ -572,6 +593,7 @@ These are reopened when explicit triggers are met, not on a schedule.
 | Question rename treated as same question | Stable `question_id` established at first publication and never reused; renames surfaced in lint. |
 | Analyst silently pools questions across versions/surveys that aren't equivalent | `question_id` is survey-scoped `(survey_id, stable_name)`, so it never pools across surveys; `GROUP BY question_version_id` is strict per-version; pooling across a rename requires the explicit `canonical_question_id` opt-in. |
 | Reworded item silently treated as the same question because its name was kept | Within a survey, keeping `stable_name` across versions *is* the continuity assertion (per-version wording is preserved in `dim_question_version`); a genuine construct change should be a rename, which breaks `question_id` and forces the explicit equivalence opt-in. |
+| Construct tags treated as a pooling key by an over-eager analyst | `construct_block` / `construct_item` are documented as provenance only; the canonical pooling key remains `canonical_question_id` (built from `parent_question_id`); the warehouse exposes no `GROUP BY construct_block` shortcut for cross-survey rollups. |
 | LLM-generated JSON with subtle logic errors | Round-trip test gate at publish time; pattern library reduces invention surface. |
 | Two parsers (API and dbt) drift apart over time | dbt reads from `raw_responses` only; normalized tables are a read-model, not an ETL input. |
 | Analyst confuses "selection count" with "respondent count" | Companion `fact_response` table at respondent-question grain; documented in marts; default examples use `COUNT(DISTINCT respondent_id)`. |

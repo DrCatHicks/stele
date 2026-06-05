@@ -59,6 +59,14 @@ scalar_questions as (
         -- pii_risk tags free-text questions (design-doc §3.9); null otherwise.
         -- The fact gates value_text on this; the API defaults absent → 'high'.
         element ->> 'pii_risk' as pii_risk,
+        -- construct_block / construct_item are optional provenance tags marking a
+        -- question as belonging to a reusable scale (e.g. 'phq9' / 'phq9_q3').
+        -- Plain questions read both directly; no inheritance to do here. They are
+        -- NOT a pooling instruction — cross-version/cross-survey pooling stays the
+        -- parent_question_id opt-in (invariant 5). Shape is gated at publish; the
+        -- construct_pair_integrity singular test guards against backdoor inserts.
+        element ->> 'construct_block' as construct_block,
+        element ->> 'construct_item' as construct_item,
         coalesce(element ->> 'title', stable_name) as prompt_text,
         display_order,
         -- See the header note: rating/boolean → numeric, text inputType number/range
@@ -94,6 +102,13 @@ matrix_questions as (
         {{ subquestion_name(['e.stable_name', matrix_value('mrow.value')]) }} as stable_name,
         e.question_type,
         cast(null as text) as pii_risk,
+        -- construct_block falls back from the row to the matrix (the whole matrix
+        -- is typically one block, with each row an item within it). construct_item
+        -- is leaf-only (an item belongs to a row, not the matrix container);
+        -- validation rejects construct_item set on the matrix element itself.
+        coalesce(mrow.value ->> 'construct_block', e.element ->> 'construct_block')
+            as construct_block,
+        mrow.value ->> 'construct_item' as construct_item,
         coalesce(e.element ->> 'title', e.stable_name)
             || ' — '
             || coalesce(mrow.value ->> 'text', {{ matrix_value('mrow.value') }}) as prompt_text,
@@ -123,6 +138,14 @@ matrixdropdown_questions as (
             as stable_name,
         e.question_type,
         cast(null as text) as pii_risk,
+        -- See the matrix CTE: block inherits from the matrix; item is leaf-only.
+        -- A matrixdropdown's leaf is the (row, column) cell, but for v1 the item
+        -- is tagged at the row level (every column of one row shares the item —
+        -- "rate PHQ-9 item 3 on these two dimensions"); per-column item is a
+        -- future extension if needed.
+        coalesce(mrow.value ->> 'construct_block', e.element ->> 'construct_block')
+            as construct_block,
+        mrow.value ->> 'construct_item' as construct_item,
         coalesce(e.element ->> 'title', e.stable_name)
             || ' — '
             || coalesce(mrow.value ->> 'text', {{ matrix_value('mrow.value') }})
@@ -158,6 +181,12 @@ paneldynamic_questions as (
         {{ subquestion_name(['e.stable_name', "tmpl.value ->> 'name'"]) }} as stable_name,
         tmpl.value ->> 'type' as question_type,
         tmpl.value ->> 'pii_risk' as pii_risk,
+        -- Block inherits from the panel container; item is leaf-only (a template
+        -- element is the item-bearing unit, not the panel itself). Mirror of the
+        -- matrix rule — validation rejects construct_item on the panel itself.
+        coalesce(tmpl.value ->> 'construct_block', e.element ->> 'construct_block')
+            as construct_block,
+        tmpl.value ->> 'construct_item' as construct_item,
         coalesce(e.element ->> 'title', e.stable_name)
             || ' — '
             || coalesce(tmpl.value ->> 'title', tmpl.value ->> 'name') as prompt_text,

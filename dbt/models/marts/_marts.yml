@@ -41,6 +41,23 @@ models:
           — the shown-set entry governing the cell's visibility (a cell is shown iff
           its panel is), which shown_set_integrity / routed_past_not_in_shown_set
           resolve was_shown against. Null for a plain or matrix question.
+      - name: construct_block
+        description: >
+          Optional authored tag identifying a reusable scale this question belongs
+          to (e.g. 'phq9', 'gad7', 'enps'). Set at definition time via a custom
+          attribute on the question (or inherited from a matrix / paneldynamic
+          container). PROVENANCE only — does NOT license cross-survey pooling;
+          analytical pooling across versions or surveys remains the explicit
+          parent_question_id opt-in (invariant 5). Null when the author has not
+          tagged the question as part of a reusable scale.
+      - name: construct_item
+        description: >
+          Optional authored tag identifying this question's position within its
+          construct_block (e.g. 'phq9_q3'). Always paired with a construct_block
+          (the construct_pair_integrity singular test enforces this). Leaf-only:
+          tagged on a plain question, a matrix row, or a paneldynamic template
+          element — never on a matrix / panel container, which group items rather
+          than being one.
 
   - name: dim_question_version
     columns:

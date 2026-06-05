@@ -557,6 +557,117 @@ def _validate_visible_if(definition: dict[str, Any], question_names: set[str]) -
                     )
 
 
+def _validate_construct_string(label: str, key: str, value: Any) -> None:
+    """A construct_block / construct_item value, if set, is a non-empty string."""
+    if value is None:
+        return
+    if not isinstance(value, str) or not value.strip():
+        raise InvalidDefinition(
+            f"question {label!r}: {key} must be a non-empty string when set, got {value!r}"
+        )
+
+
+def _validate_construct_tags(definition: dict[str, Any]) -> None:
+    """Construct-membership tags. Two optional custom attributes:
+
+        construct_block: identifier of a reusable scale (e.g. 'phq9', 'gad7').
+        construct_item:  identifier of an item within that block ('phq9_q3').
+
+    Where they may appear:
+      - Top-level plain question:         both, no inheritance.
+      - matrix / paneldynamic container:  block only (inherited by leaves).
+      - Matrix row, matrixdropdown row,
+        paneldynamic template element:    both; block falls back to the
+                                          container's value if unset.
+
+    Authoring rules enforced here so a clear 422 reaches the editor (FR-2),
+    rather than the value rotting silently into the warehouse:
+      - Each tag is a non-empty string if set.
+      - A container element (matrix / paneldynamic) does not carry
+        construct_item: items belong to leaf questions (rows / cells),
+        not to the container that groups them.
+      - A leaf carrying construct_item has a construct_block in scope —
+        either its own or inherited from the container.
+
+    Note: these tags are *provenance*, not analytical-pooling instructions.
+    Cross-version / cross-survey pooling stays the explicit parent_question_id
+    opt-in (invariant 5). Two questions sharing a construct_block does not
+    license `GROUP BY construct_block` for pooled analysis — that is still a
+    deliberate researcher judgment expressed via parent_question_id.
+    """
+    for element in _iter_elements(definition):
+        name = element.get("name")
+        if not isinstance(name, str) or not name:
+            # Display-only elements have no question identity; skip.
+            continue
+        _validate_construct_string(name, "construct_block", element.get("construct_block"))
+        _validate_construct_string(name, "construct_item", element.get("construct_item"))
+        owner_block = element.get("construct_block")
+        owner_item = element.get("construct_item")
+        qtype = element.get("type")
+
+        if qtype in MATRIX_TYPES:
+            if isinstance(owner_item, str):
+                raise InvalidDefinition(
+                    f"question {name!r}: construct_item belongs to a matrix row, "
+                    "not the matrix itself — move it onto the row"
+                )
+            for row in element.get("rows", []) or []:
+                if not isinstance(row, dict):
+                    # A scalar row (string id) cannot carry construct attrs; skip.
+                    continue
+                row_id = _choice_value(row) or "<row>"
+                row_label = f"{name}.{row_id}"
+                _validate_construct_string(row_label, "construct_block", row.get("construct_block"))
+                _validate_construct_string(row_label, "construct_item", row.get("construct_item"))
+                row_block = row.get("construct_block") or owner_block
+                if isinstance(row.get("construct_item"), str) and not isinstance(row_block, str):
+                    raise InvalidDefinition(
+                        f"question {row_label!r}: construct_item set but no construct_block "
+                        "in scope (set it on the row or the matrix)"
+                    )
+            # matrixdropdown columns: a (row, col) cell's construct identity is the
+            # row's (int_survey_questions only reads construct_* from rows), so a
+            # column-level tag is silently dropped by the warehouse. Reject loudly
+            # rather than allow silent data loss — per-column item tagging is a
+            # future extension if we ever need different items per row dimension.
+            if element.get("type") == "matrixdropdown":
+                for column in element.get("columns", []) or []:
+                    if not isinstance(column, dict):
+                        continue
+                    col_label = f"{name}.<col {column.get('name', '?')}>"
+                    for key in ("construct_block", "construct_item"):
+                        if column.get(key) is not None:
+                            raise InvalidDefinition(
+                                f"question {col_label!r}: {key} on a matrixdropdown "
+                                "column is not supported — tag the row instead (a "
+                                "cell's construct identity is its row's)"
+                            )
+        elif qtype in REPEATING_TYPES:
+            if isinstance(owner_item, str):
+                raise InvalidDefinition(
+                    f"question {name!r}: construct_item belongs to a paneldynamic template "
+                    "element, not the panel itself — move it onto the template element"
+                )
+            for tmpl in _panel_template_elements(element):
+                tmpl_label = f"{name}.{tmpl['name']}"
+                _validate_construct_string(
+                    tmpl_label, "construct_block", tmpl.get("construct_block")
+                )
+                _validate_construct_string(tmpl_label, "construct_item", tmpl.get("construct_item"))
+                tmpl_block = tmpl.get("construct_block") or owner_block
+                if isinstance(tmpl.get("construct_item"), str) and not isinstance(tmpl_block, str):
+                    raise InvalidDefinition(
+                        f"question {tmpl_label!r}: construct_item set but no construct_block "
+                        "in scope (set it on the template element or the panel)"
+                    )
+        else:
+            if isinstance(owner_item, str) and not isinstance(owner_block, str):
+                raise InvalidDefinition(
+                    f"question {name!r}: construct_item set without construct_block"
+                )
+
+
 def _validate_free_text_pii(definition: dict[str, Any]) -> None:
     """Free-text PII gate (invariant 6): pii_risk must be low/high if set, and a
     downgrade to 'low' demands an explicit rationale at definition time. Never
@@ -587,3 +698,4 @@ def validate_definition(definition: dict[str, Any]) -> None:
     question_names = _validate_questions(definition)
     _validate_visible_if(definition, question_names)
     _validate_free_text_pii(definition)
+    _validate_construct_tags(definition)
